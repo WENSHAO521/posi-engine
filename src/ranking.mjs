@@ -29,6 +29,7 @@ export function rankCategory(entries, { category_code, metric_year }) {
       category_code,
       metric_year,
       rank: null,
+      rank_mid: null,
       category_size,
       percentile: null,
       quartile: null,
@@ -68,7 +69,8 @@ export function rankCategory(entries, { category_code, metric_year }) {
         journal_id: entry.journal_id,
         category_code,
         metric_year,
-        rank: Math.round(rankMid * 100) / 100, // fractional mid-rank preserved, e.g. 6 or 6.5
+        rank: position, // conventional competition rank: 1, 2, 2, 4, 5, ... (tied entries share the block's starting position)
+        rank_mid: Math.round(rankMid * 100) / 100, // fractional mid-rank, percentile-formula input only — e.g. 6 or 6.5
         category_size,
         percentile: Math.round(percentile * 100) / 100,
         quartile,

@@ -52,6 +52,20 @@ test('tied PCI values share the same mid-rank and percentile', () => {
   }
 })
 
+test('rank is an integer competition rank; rank_mid is the fractional percentile input', () => {
+  // 20 journals, three tied — after sorting descending they occupy positions 17,18,19.
+  const pcis = [10, 9, 8, 7, 2.0, 2.0, 2.0, 5, 4, 3, 2.9, 2.8, 2.7, 2.6, 2.5, 2.4, 2.3, 2.2, 2.1, 1]
+  const entries = makeEntries(pcis)
+  const records = rankCategory(entries, { category_code: 'P3.03', metric_year: 2027 })
+  const tiedIds = entries.filter(e => e.pci === 2.0).map(e => e.journal_id)
+  const tied = records.filter(r => tiedIds.includes(r.journal_id))
+  for (const r of tied) {
+    assert.equal(Number.isInteger(r.rank), true, 'rank must be an integer')
+    assert.equal(r.rank, 17, 'competition rank = position of the first tied entry')
+    assert.equal(r.rank_mid, 18, 'rank_mid = average position across the 3-way tie (17+18+19)/3')
+  }
+})
+
 test('percentile formula matches PJR-SPEC.md § 8 exactly for a known case', () => {
   // category_size = 20, rank_mid = 1 (sole top journal, no tie)
   // percentile = 100 * (20 - 1 + 0.5) / 20 = 97.5
