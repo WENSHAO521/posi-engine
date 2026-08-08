@@ -25,7 +25,7 @@ function toCsv(rows, columns) {
  * @param {object[]} params.normalizedRecords
  * @param {string[][]} params.warningsPerRecord - parallel to normalizedRecords
  * @param {{entities:object[], hardConflicts:object[], possibleDuplicates:object[]}} params.dedupe
- * @param {object} params.meta - { source_repository, source_commit, source_file, engine_commit, schema_commit, generated_at }
+ * @param {object} params.meta - { source_repository, source_commit, source_file, generator_commit, spec_commit, generated_at }
  */
 export function buildAuditReport({ sourceRecords, normalizedRecords, warningsPerRecord, dedupe, meta }) {
   const total = sourceRecords.length
@@ -70,8 +70,12 @@ export function buildAuditReport({ sourceRecords, normalizedRecords, warningsPer
     source_repository: meta.source_repository,
     source_commit: meta.source_commit,
     source_file: meta.source_file,
-    engine_commit: meta.engine_commit,
-    schema_commit: meta.schema_commit,
+    // generator_commit/spec_commit must be commits that, checked out, actually
+    // reproduce this run — never read live from a possibly-uncommitted working
+    // tree mid-run. See audits/migrations/initial-journal-migration/
+    // PROVENANCE-NOTE.md in posi-data for why this distinction exists.
+    generator_commit: meta.generator_commit,
+    spec_commit: meta.spec_commit,
     posi_j_ids_generated: 0,
     counts: {
       source_records: total,
@@ -102,8 +106,8 @@ export function buildAuditReport({ sourceRecords, normalizedRecords, warningsPer
 Generated: ${meta.generated_at}
 Mode: **dry-run** (no POSI-J ids generated, nothing written to \`journals/\`)
 Source: ${meta.source_repository}@${meta.source_commit} (\`${meta.source_file}\`)
-Engine: ${meta.engine_commit}
-Schema: ${meta.schema_commit}
+Generator (posi-engine): ${meta.generator_commit}
+Spec (posi-data): ${meta.spec_commit}
 
 ## Summary
 

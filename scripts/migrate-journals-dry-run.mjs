@@ -13,7 +13,14 @@
  *     --out path/to/output-dir \
  *     [--source-repository owner/repo] \
  *     [--source-commit <sha>] \
- *     [--schema-commit <sha>]
+ *     [--spec-commit <sha>]
+ *
+ * generator_commit (this repo's provenance field) is always this repo's
+ * current HEAD — which is only trustworthy as "checkout this to reproduce
+ * the run" if the working tree is clean. If it isn't, this script prints a
+ * loud warning: publish the audit only after committing and re-running, not
+ * before (see audits/migrations/initial-journal-migration/PROVENANCE-NOTE.md
+ * in posi-data for the incident that motivated this check).
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
@@ -36,6 +43,19 @@ function currentCommit() {
   }
 }
 
+function warnIfWorkingTreeDirty() {
+  try {
+    const status = execFileSync('git', ['status', '--porcelain'], { cwd: resolve('.') }).toString()
+    if (status.trim().length > 0) {
+      console.warn('\n⚠️  WARNING: posi-engine working tree has uncommitted changes.')
+      console.warn('   generator_commit will record a commit that does NOT reproduce this exact run.')
+      console.warn('   Commit first, then re-run, before publishing this audit anywhere.\n')
+    }
+  } catch {
+    // git not available or not a repo — nothing useful to check
+  }
+}
+
 function main() {
   const inPath = arg('in')
   const outDir = resolve(arg('out', 'migration-audit-output'))
@@ -43,6 +63,8 @@ function main() {
     console.error('Usage: node scripts/migrate-journals-dry-run.mjs --in <migration-source.jsonl> --out <output-dir>')
     process.exit(1)
   }
+
+  warnIfWorkingTreeDirty()
 
   const raw = readFileSync(resolve(inPath), 'utf-8').trim().split('\n').filter(Boolean)
   const sourceRecords = raw.map(line => JSON.parse(line))
@@ -69,8 +91,8 @@ function main() {
       source_repository: arg('source-repository', 'unknown'),
       source_commit: arg('source-commit', 'unknown'),
       source_file: 'migration-source.jsonl',
-      engine_commit: currentCommit(),
-      schema_commit: arg('schema-commit', 'unknown'),
+      generator_commit: currentCommit(),
+      spec_commit: arg('spec-commit', 'unknown'),
       generated_at: new Date().toISOString(),
     },
   })
