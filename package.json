@@ -1,0 +1,18 @@
+{
+  "name": "posi-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PSC classification, PCI/PCI-5/PNCI, and ranking calculation engine for POSI (Panorama Open Scholarly Index)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WENSHAO521/posi-engine.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
