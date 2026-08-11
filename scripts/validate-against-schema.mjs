@@ -11,18 +11,30 @@
  * Exits non-zero if anything fails, so it's usable as a CI gate.
  *
  * Usage:
- *   node scripts/validate-against-schema.mjs /path/to/posi-data
+ *   node scripts/validate-against-schema.mjs /path/to/posi-data [--data-dir /path/to/metrics-and-rankings-root]
+ *
+ * `--data-dir` lets the metrics/rankings tree being checked live somewhere
+ * other than the posi-data checkout itself (e.g. a staging/sample-output
+ * directory) while schema/ and journals/discovered/ are still read from
+ * the posi-data checkout — see run-pjr-seed-pipeline.mjs's
+ * --metrics-rankings-output-dir for why that split exists.
  */
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
 import { readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 
+function arg(name, fallback = null) {
+  const i = process.argv.indexOf(`--${name}`)
+  return i !== -1 ? process.argv[i + 1] : fallback
+}
+
 const posiDataDir = process.argv[2]
 if (!posiDataDir) {
-  console.error('Usage: node scripts/validate-against-schema.mjs /path/to/posi-data')
+  console.error('Usage: node scripts/validate-against-schema.mjs /path/to/posi-data [--data-dir /path/to/metrics-and-rankings-root]')
   process.exit(1)
 }
+const dataDir = arg('data-dir', posiDataDir)
 const ajv = new Ajv2020({ strict: false, allErrors: true })
 addFormats(ajv)
 
@@ -67,7 +79,7 @@ try {
 
 // metrics/**/*.json
 try {
-  const files = walk(join(posiDataDir, 'metrics'))
+  const files = walk(join(dataDir, 'metrics'))
   let count = 0
   for (const f of files) {
     const obj = JSON.parse(readFileSync(f, 'utf-8'))
@@ -83,7 +95,7 @@ try {
 
 // rankings/**/*.json (each file is an array of ranking records)
 try {
-  const files = walk(join(posiDataDir, 'rankings'))
+  const files = walk(join(dataDir, 'rankings'))
   let count = 0
   for (const f of files) {
     const arr = JSON.parse(readFileSync(f, 'utf-8'))
