@@ -32,6 +32,53 @@
  * journals, never reviewed for POSI Core Collection admission; see
  * posi-data/corpus/README.md).
  *
+ * --- Mapping to the "POSI Journal Evaluation & Ranking Framework 1.0"
+ * --- 15-step pipeline order (documentation only — this script's own
+ * --- numbered steps above are unchanged; this note says which framework
+ * --- steps this OpenAlex-metrics-only run does and does not cover):
+ *
+ *   01 Identity Resolution         -> this script's step 1-2 (normalize/dedupe/mint)
+ *   02 Coverage/PQF                -> NOT run here — this corpus's journals are
+ *                                     status:"discovered" benchmark records, never
+ *                                     evaluated for Core Collection admission (see
+ *                                     src/pqf.mjs for the admission-only output
+ *                                     contract that would apply to a real PCC run)
+ *   03 Evidence Resolver           -> NOT run here — no site-crawl evidence exists
+ *                                     for this corpus; AJR-E/AJR-M need that ETL
+ *                                     step, which is separate and out of scope for
+ *                                     an OpenAlex-only metrics pass (see README)
+ *   04 First Publication Date      -> NOT run here — same reason (no publisher/
+ *                                     Crossref-article-level evidence fetched);
+ *                                     see src/first-publication-date.mjs, unused
+ *                                     by this script today
+ *   05 Lifecycle Classification    -> NOT run here — depends on 04
+ *   06 PSC Classification          -> covered upstream (classify-psc.mjs style
+ *                                     classification, see corpus/README.md);
+ *                                     confidence gating happens at this script's
+ *                                     step 5 (`m.confidence !== 'high'`)
+ *   07 Evidence Coverage           -> NOT run here — depends on 03
+ *   08 AJR-E/AJR-M                 -> NOT run here — depends on 03/05/07. AJR-M's
+ *                                     Citation Performance dimension DOES consume
+ *                                     this script's PCI/PCI-5 output once real
+ *                                     evidence flows through a future evidence-
+ *                                     resolver-backed run — see src/ajr-mature.mjs
+ *   09 PCI/PCI-5/PNCI               -> this script's step 3-4
+ *   10 Citation Integrity           -> this script's step 4 (partial — see its
+ *                                      own note: only citationConcentration runs
+ *                                      this pass, real citation-edge data would
+ *                                      be needed for self-citation/stacking/
+ *                                      cartel/publisher-clustering)
+ *   11 Eligibility Gates            -> the confidence >= high gate at step 5 is
+ *                                      the one eligibility gate this pass applies
+ *   12 Rank/Midrank/Percentile      -> this script's step 5 (ranking.mjs, i.e.
+ *                                      the Citation Q track specifically — see
+ *                                      src/quartile-tracks.mjs's rankCitationTrack)
+ *   13 E-Q/M-Q/Citation Q           -> only Citation Q is produced (no AJR-E/
+ *                                      AJR-M scores exist yet to feed E-Q/M-Q)
+ *   14 Frozen Release               -> this script's step 6 (non-official manifest)
+ *   15 Verification                 -> scripts/validate-against-schema.mjs (run
+ *                                      separately, not invoked by this script)
+ *
  * Usage:
  *   node scripts/run-pjr-seed-pipeline.mjs \
  *     --corpus path/to/global-benchmark.json \
