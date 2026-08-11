@@ -38,6 +38,20 @@ data store — this repo has no database of its own.
 > ETL exists yet — this pass built the scoring/normalization layer these
 > future evidence records will feed). See the PR description for the full
 > list of what's real vs. synthetic-only so far.
+>
+> **Known external blocker (2026-08):** the seed-corpus pipeline
+> completed identity resolution for all 1000 benchmark journals (real
+> `POSI-J-######` ids minted, see `posi-data`'s
+> `journals/discovered/global-benchmark-seed-2025.jsonl`), but PCI/PCI-5/
+> PNCI could not be computed — **OpenAlex's `/works` filtered-list
+> endpoint now requires paid credits**, confirmed via a direct request
+> returning `429 {"error":"Rate limit exceeded", "dailyRemainingUsd":0}`.
+> The free `/sources/{id}` singleton lookup this project's identity/PSC
+> enrichment relies on is unaffected. This is a real, structural change to
+> OpenAlex's API pricing that affects every future PJR release pipeline
+> run, not a bug in this project's code — see `posi-data`'s
+> `audits/migrations/benchmark-corpus-seed/README.md` for the full
+> writeup and reproduction steps once paid access is available.
 
 ## What this is
 
