@@ -64,6 +64,16 @@ async function fetchJsonWithRetry(url, cacheDir, keyHint) {
   }
   const maxAttempts = 5
   let lastError = null
+  // BUG FIX: the previous version discarded the actual failure reason once
+  // retries on a 429/5xx were exhausted — the cache record ended up as
+  // `{ status: null, error: "null" }`, indistinguishable from a genuine
+  // network failure. Track the last non-ok response's status + a snippet
+  // of its body (e.g. OpenAlex's own "insufficient budget" / rate-limit
+  // JSON error) so a caller can tell "retried and exhausted a real 429"
+  // apart from "never got a response at all" — same distinct-reasons
+  // discipline as evidence-coverage.mjs's describeFetchFailureReason().
+  let lastHttpStatus = null
+  let lastHttpBodySnippet = null
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(20000) })
@@ -73,11 +83,13 @@ async function fetchJsonWithRetry(url, cacheDir, keyHint) {
         return record
       }
       if (!res.ok) {
+        lastHttpStatus = res.status
+        try { lastHttpBodySnippet = (await res.text()).slice(0, 300) } catch { /* body already consumed/unreadable */ }
         if (res.status === 429 || res.status >= 500) {
           await sleep(2 ** attempt * 500)
           continue
         }
-        const record = { ok: false, status: res.status, data: null }
+        const record = { ok: false, status: res.status, data: null, body_snippet: lastHttpBodySnippet }
         writeFileSync(cacheFile, JSON.stringify(record), 'utf-8')
         return record
       }
@@ -90,7 +102,13 @@ async function fetchJsonWithRetry(url, cacheDir, keyHint) {
       await sleep(2 ** attempt * 500)
     }
   }
-  const record = { ok: false, status: null, data: null, error: lastError?.message ?? String(lastError) }
+  const record = {
+    ok: false,
+    status: lastHttpStatus, // e.g. 429, not null — the retries were exhausted, not "no response ever received"
+    data: null,
+    error: lastError?.message ?? (lastHttpStatus != null ? `exhausted ${maxAttempts} retries on HTTP ${lastHttpStatus}` : String(lastError)),
+    body_snippet: lastHttpBodySnippet,
+  }
   writeFileSync(cacheFile, JSON.stringify(record), 'utf-8')
   return record
 }
