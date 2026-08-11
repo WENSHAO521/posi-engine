@@ -6,13 +6,22 @@ rankings (percentile, quartile). Reads from and writes back to
 [posi-data](https://github.com/WENSHAO521/posi-data), which is the canonical
 data store — this repo has no database of its own.
 
-> **Status: scaffold.** `src/ranking.mjs` (PJR-SPEC.md § 8) and the core of
-> `src/pci.mjs` (§ 5–6: `isCitable`, `calculatePci`, `calculatePnci`) are
-> implemented and covered by tests. PCI-5, the category-average aggregation
-> `calculatePnci`'s baseline depends on, PSC classification, citation
-> integrity, and release assembly are stubs — all four need real posi-data
-> journal/work/citation records to build and test against, and none exist
-> yet (see that repo's README status note).
+> **Status: all five pipeline modules implemented and tested.**
+> `src/ranking.mjs` (§ 8), `src/pci.mjs` (§ 5–6, including PCI-5 and the
+> `calculateCategoryBaseline` PNCI baseline), `src/psc-classify.mjs`
+> (OpenAlex-topic crosswalk, see PSC-CROSSWALK.md), `src/citation-integrity.mjs`
+> (§ 9 heuristic checks), and `src/release.mjs` (§ 1–3 manifest assembly) all
+> have unit tests against synthetic fixtures. What's still genuinely
+> untested at scale is real citation-EDGE data (journal-to-journal citing
+> relationships) — `selfCitationRate`, `citationStacking`,
+> `publisherCitationCluster`, and `citationCartel` are implemented and unit
+> tested, but the seed-corpus pipeline run (see `posi-data`'s
+> `pjr-seed-corpus-1000` branch) could only exercise
+> `citationConcentration` and `suddenCitationSpike` against real data —
+> building a real citation-edge dataset (resolving every citing work back
+> to its own journal) is a separate, materially more expensive ETL pass
+> than what per-journal OpenAlex enrichment provides. See that branch's PR
+> description for the full list of what's real vs. synthetic-only so far.
 
 ## What this is
 
@@ -46,10 +55,11 @@ posi-data (journals, works, citations)
 | Module | Status | Implements |
 |---|---|---|
 | `src/ranking.mjs` | **Implemented + tested** | PJR-SPEC.md § 8 — mid-rank tie handling, percentile formula, `MIN_CATEGORY_SIZE` gate |
-| `src/pci.mjs` | **Core implemented + tested**; PCI-5 and PNCI's category baseline pending | PJR-SPEC.md § 5–6 — citable-items filtering, PCI/PNCI formulas |
-| `src/psc-classify.mjs` | Stub | PJR-SPEC.md § 10 — topic-distribution-based category suggestion (ML-suggested, human-confirmed) |
-| `src/citation-integrity.mjs` | Stub | PJR-SPEC.md § 9 — self-citation rate, citation stacking, clustering, spike detection |
-| `src/release.mjs` | Stub | PJR-SPEC.md § 1–3 — manifest generation, asset packaging, GitHub Release |
+| `src/pci.mjs` | **Implemented + tested** (PCI, PCI-5, PNCI + category baseline) | PJR-SPEC.md § 5–6 — citable-items filtering, PCI/PCI-5/PNCI formulas |
+| `src/psc-classify.mjs` | **Implemented + tested** | PSC-CROSSWALK.md — OpenAlex topic-to-PSC crosswalk with concentration + sample-size confidence gates |
+| `src/citation-integrity.mjs` | **Implemented + tested** (see status note above re: real citation-edge data) | PJR-SPEC.md § 9 — self-citation rate, citation stacking, concentration, publisher clustering, spike, cartel detection |
+| `src/release.mjs` | **Implemented + tested** | PJR-SPEC.md § 1–3 — manifest generation (`buildManifest`, `validateManifest`), asset filename/SHA256SUMS assembly. Does **not** call the GitHub Releases API — publishing stays a separate, human-triggered step. |
+| `src/openalex-document-type.mjs` | **Implemented + tested** | Maps OpenAlex work `type` -> PJR-SPEC.md § 5 `document_type`, documenting every type this project has observed and why (see module header) |
 
 ## Running the tests
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isCitable, calculatePci, calculatePnci } from '../src/pci.mjs'
+import { isCitable, calculatePci, calculatePci5, calculateCategoryBaseline, calculatePnci } from '../src/pci.mjs'
 
 test('isCitable follows the PJR-SPEC.md § 5 document-type table', () => {
   assert.equal(isCitable({ document_type: 'research-article' }), true)
@@ -54,4 +54,50 @@ test('calculatePnci: 1.00 means exactly at the category average', () => {
 test('calculatePnci returns null when there is no category baseline to compare against', () => {
   assert.equal(calculatePnci(4.0, 0), null)
   assert.equal(calculatePnci(null, 4.0), null)
+})
+
+test('calculatePci5 uses the exact same formula as calculatePci, just over whatever works the caller passed in', () => {
+  const works = [
+    ...Array.from({ length: 40 }, () => ({ document_type: 'research-article', citations_in_year: 2 })),
+    { document_type: 'editorial', citations_in_year: 99 }, // not citable — excluded from both numerator and denominator
+  ]
+  const pci = calculatePci(works)
+  const pci5 = calculatePci5(works)
+  assert.deepEqual(pci5, pci)
+  assert.equal(pci5.citable_items, 40)
+  assert.equal(pci5.citation_count, 80)
+})
+
+test('calculateCategoryBaseline pools citations/citable_items across the category rather than averaging per-journal ratios', () => {
+  // Journal A: tiny denominator, freakishly high ratio (10/2 = 5.0).
+  // Journal B: high volume, ratio 2.0 (2000/1000).
+  // An unweighted mean of ratios would give (5.0 + 2.0) / 2 = 3.5 — dominated
+  // by the low-volume outlier. The pooled rate is 2010/1002 ≈ 2.006, correctly
+  // reflecting that journal B's volume dominates the category.
+  const entries = [
+    { citable_items: 2, citation_count: 10 },
+    { citable_items: 1000, citation_count: 2000 },
+  ]
+  const baseline = calculateCategoryBaseline(entries)
+  assert.equal(Math.round(baseline * 1000) / 1000, Math.round((2010 / 1002) * 1000) / 1000)
+})
+
+test('calculateCategoryBaseline returns null (not 0) for a category with zero citable items', () => {
+  assert.equal(calculateCategoryBaseline([]), null)
+  assert.equal(calculateCategoryBaseline([{ citable_items: 0, citation_count: 0 }]), null)
+})
+
+test('calculatePnci wired end-to-end with a real calculateCategoryBaseline output', () => {
+  const categoryEntries = [
+    { citable_items: 100, citation_count: 300 }, // this journal
+    { citable_items: 200, citation_count: 400 },
+    { citable_items: 50, citation_count: 50 },
+  ]
+  const baseline = calculateCategoryBaseline(categoryEntries) // 750/350 ≈ 2.142857
+  const journalPci = calculatePci([
+    ...Array.from({ length: 100 }, () => ({ document_type: 'research-article', citations_in_year: 3 })),
+  ]).ratio // 3.0
+  const pnci = calculatePnci(journalPci, baseline)
+  assert.ok(pnci > 1, 'a journal citing at 3.0 against a ~2.14 category baseline should be above category average')
+  assert.equal(Math.round(pnci * 1000) / 1000, Math.round((3 / (750 / 350)) * 1000) / 1000)
 })
