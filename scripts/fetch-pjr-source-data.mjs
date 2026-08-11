@@ -123,6 +123,14 @@ function worksListUrl({ sourceId, fromYear, toYear, select, perPage, cursor }) {
     cursor,
     mailto: MAILTO,
   })
+  // Deterministic, most-recent-first order. This matters specifically for
+  // journals whose true work count exceeds --max-pages: rather than an
+  // unspecified/undocumented default order, publication_date:desc means a
+  // capped fetch is truncated from the OLDEST end of the window first — so
+  // the (flagship, more heavily weighted) most recent 2-year PCI window is
+  // far more likely to be fully covered than the 5-year PCI-5 tail, even
+  // for a capped journal. See numerator_capped in this script's output.
+  params.set('sort', 'publication_date:desc')
   return `${OPENALEX_BASE}/works?${params.toString()}`
 }
 
