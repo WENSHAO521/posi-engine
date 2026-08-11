@@ -278,6 +278,16 @@ async function main() {
         primary: j.psc_category,
         secondary: [],
         psc_version: '1.0.0',
+        // BUG FIX: this corpus record's own psc_confidence was computed
+        // (see corpus/README.md) but was never carried through into the
+        // written journal record's classification block — schema/
+        // journal.schema.json didn't have a field for it until the
+        // "POSI Journal Evaluation & Ranking Framework 1.0" rollout added
+        // classification.psc_confidence. Without this, every discovered
+        // journal record silently lost its 4-state PSC-CROSSWALK-0.2
+        // confidence, which src/cohort.mjs's ranking-eligibility gate
+        // depends on.
+        psc_confidence: j.psc_confidence ?? null,
         assigned_by: 'ml_suggested_pending_review',
         assigned_at: today,
       } : null,
