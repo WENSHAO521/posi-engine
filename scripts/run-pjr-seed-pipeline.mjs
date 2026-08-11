@@ -237,7 +237,12 @@ async function main() {
       coverage: null,
       selection: null,
       provenance: [
-        { source: 'openalex', source_record_id: j.openalex_source_id, retrieved_at: nowIso, license: null },
+        // OpenAlex's own data is released under CC0 1.0 (public domain
+        // dedication) — see https://docs.openalex.org/ - "About the data",
+        // which is why posi-data/LICENSE-DATA can point a reader at
+        // journals/*'s own provenance[].license for upstream-sourced
+        // records instead of claiming CC BY 4.0 over data POSI didn't itself produce.
+        { source: 'openalex', source_record_id: j.openalex_source_id, retrieved_at: nowIso, license: 'CC0-1.0' },
       ],
       created_at: nowIso,
       updated_at: nowIso,
