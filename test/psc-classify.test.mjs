@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mapToPsc, classifyPsc } from '../src/psc-classify.mjs'
+import { mapToPsc, classifyPsc, isRankEligiblePscConfidence } from '../src/psc-classify.mjs'
 
 test('mapToPsc uses subfield overrides before falling back to field-level mapping', () => {
   assert.equal(mapToPsc('Social Sciences', 'Sociology and Political Science'), 'P5.04')
@@ -38,20 +38,49 @@ test('classifyPsc flags low confidence when the winning category does not domina
   assert.equal(result.psc_confidence, 'low', 'no category reaches the 15% concentration threshold across 10 equal-weight, distinct-PSC topics')
 })
 
-test('classifyPsc flags low confidence for a small journal even with a dominant share (regression: GRHAS)', () => {
+test('classifyPsc downgrades (not "low", "medium") a small-but-not-tiny journal with a genuinely dominant share (regression: GRHAS)', () => {
   // Reproduces the real case that motivated the works_count gate: a small
   // journal (41 works) where a handful of dance-studies articles carried
   // enough topic-model weight to look "confidently" classified as
-  // Psychology by concentration share alone (~35%), despite the journal
-  // being a general humanities/arts/society title. See PSC-CROSSWALK.md § 3.
+  // Psychology by concentration share alone (~70% here), despite the
+  // journal being a general humanities/arts/society title. See
+  // PSC-CROSSWALK.md § 3. PSC-CROSSWALK-0.2 (4-state model) reports this as
+  // `medium`, not `low`: the concentration signal is real (clears the same
+  // 15% bar `high` uses), just on a thinner sample (41 works, below the
+  // 50-work `high` bar but above the 20-work `medium` floor) — see
+  // psc-classify.mjs's module header for why that's `medium` rather than
+  // `low`. Practically this is still NOT rank-eligible either way (only
+  // `high`/`verified` enter a peer cohort — see isRankEligiblePscConfidence).
   const topics = [
     { count: 13, field: { display_name: 'Psychology' }, subfield: { display_name: 'Experimental and Cognitive Psychology' } },
     { count: 4, field: { display_name: 'Arts and Humanities' }, subfield: { display_name: 'Visual Arts and Performing Arts' } },
     { count: 4, field: { display_name: 'Psychology' }, subfield: { display_name: 'Social Psychology' } },
     { count: 3, field: { display_name: 'Social Sciences' }, subfield: { display_name: 'Cultural Studies' } },
   ]
-  const result = classifyPsc(topics, 41) // below MIN_WORKS_COUNT (50)
-  assert.equal(result.psc_confidence, 'low', 'a 41-work journal should not be treated as confidently classified regardless of share')
+  const result = classifyPsc(topics, 41) // below MIN_WORKS_COUNT (50), above MEDIUM_MIN_WORKS_COUNT (20)
+  assert.equal(result.psc_confidence, 'medium')
+  assert.equal(isRankEligiblePscConfidence(result.psc_confidence), false, 'medium confidence must never be rank-eligible')
+})
+
+test('classifyPsc stays low (not medium) when the sample is too thin even for the medium tier', () => {
+  const topics = [
+    { count: 13, field: { display_name: 'Psychology' }, subfield: { display_name: 'Experimental and Cognitive Psychology' } },
+    { count: 4, field: { display_name: 'Arts and Humanities' }, subfield: { display_name: 'Visual Arts and Performing Arts' } },
+  ]
+  const result = classifyPsc(topics, 12) // below MEDIUM_MIN_WORKS_COUNT (20)
+  assert.equal(result.psc_confidence, 'low')
+})
+
+test('classifyPsc stays low, not medium, for a large sample with no real concentration (generalist mega-journal shape)', () => {
+  // A big, well-sampled journal whose topics are genuinely scattered (10
+  // distinct PSC categories at an even ~10% share each — below the 15%
+  // concentration bar) must stay `low`, never `medium` — lack of real
+  // concentration is disqualifying on its own regardless of sample size.
+  // See PSC-CROSSWALK.md § 4's Nature/Science/The Lancet discussion.
+  const fields = ['Mathematics', 'Chemistry', 'Physics and Astronomy', 'Psychology', 'Computer Science', 'Materials Science', 'Veterinary Science', 'Chemical Engineering', 'Business, Management and Accounting', 'Energy']
+  const topics = fields.map(f => ({ count: 3, field: { display_name: f } }))
+  const result = classifyPsc(topics, 5000)
+  assert.equal(result.psc_confidence, 'low')
 })
 
 test('classifyPsc marks the same distribution high-confidence once works_count clears the threshold', () => {
@@ -64,10 +93,20 @@ test('classifyPsc marks the same distribution high-confidence once works_count c
   assert.equal(result.psc_confidence, 'high')
 })
 
-test('classifyPsc returns nulls for an empty or all-unmapped topics array', () => {
-  assert.deepEqual(classifyPsc([], 100), { psc_category: null, psc_confidence: null })
+test('classifyPsc returns unclassified for an empty or all-unmapped topics array', () => {
+  assert.deepEqual(classifyPsc([], 100), { psc_category: null, psc_confidence: 'unclassified' })
   assert.deepEqual(
     classifyPsc([{ count: 5, field: { display_name: 'Not A Real Field' } }], 100),
-    { psc_category: null, psc_confidence: null }
+    { psc_category: null, psc_confidence: 'unclassified' }
   )
+})
+
+test('isRankEligiblePscConfidence: only high and verified are rank-eligible', () => {
+  assert.equal(isRankEligiblePscConfidence('high'), true)
+  assert.equal(isRankEligiblePscConfidence('verified'), true)
+  assert.equal(isRankEligiblePscConfidence('medium'), false)
+  assert.equal(isRankEligiblePscConfidence('low'), false)
+  assert.equal(isRankEligiblePscConfidence('unclassified'), false)
+  assert.equal(isRankEligiblePscConfidence(null), false)
+  assert.equal(isRankEligiblePscConfidence(undefined), false)
 })

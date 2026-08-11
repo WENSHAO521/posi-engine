@@ -14,28 +14,75 @@
  * via the free singleton lookup), the natural crosswalk target became
  * OpenAlex's fixed ~26-field taxonomy directly, not a generic topic string.
  *
- * Human confirmation is not a hard gate here — instead, `confidence: 'low'`
- * is the signal that downstream consumers (ranking/cohort code) must treat
- * as non-authoritative. This is deliberately weaker than the original
- * stub's "never auto-applied without a Subject Editor" design; see
- * PSC-CROSSWALK.md § 5 — only `high`-confidence classifications should
- * ever be used for cohort/quartile membership. A human-review workflow for
- * `low`-confidence or disputed classifications remains a valid future
- * addition (POSI's evidence-correction/appeals principle applies here the
- * same as anywhere else) but is not required for a classification to exist
- * at all, the way the original stub specified.
+ * Human confirmation is not a hard gate here — instead, `confidence` is the
+ * signal that downstream consumers (ranking/cohort code) must treat as
+ * non-authoritative below `high`. This is deliberately weaker than the
+ * original stub's "never auto-applied without a Subject Editor" design;
+ * see PSC-CROSSWALK.md § 5 — only `high` (or a human-`verified`
+ * classification, which this module never produces itself — see
+ * cohort.mjs) should ever be used for cohort/quartile membership. A
+ * human-review workflow for `medium`/`low`-confidence or disputed
+ * classifications remains a valid future addition (POSI's
+ * evidence-correction/appeals principle applies here the same as anywhere
+ * else) but is not required for a classification to exist at all, the way
+ * the original stub specified.
+ *
+ * PSC-CROSSWALK-0.2 (POSI Journal Evaluation & Ranking Framework 1.0):
+ * expands `psc_confidence` from a binary `high`/`low` to four states —
+ * `high`, `medium`, `low`, `unclassified` — per the framework's explicit
+ * requirement that "only `high` (or `verified`) may enter a peer cohort"
+ * and that a `low`/`medium`/`unclassified` guess may still DISPLAY but
+ * must never rank. The `high` bar itself (both gates below) is UNCHANGED
+ * from PSC-CROSSWALK.md v0.1/PSC-CROSSWALK-0.1 — this is additive
+ * granularity below that bar, not a redefinition of what "high" means, so
+ * every journal previously classified `high` stays `high`.
+ *
+ * Judgment call (flagged per the task's own instructions, since the
+ * framework doesn't specify the medium/low split precisely): `medium` is
+ * reserved for "the category genuinely IS concentrated (clears the same
+ * 15% share bar as `high`) but on a thinner sample than the full 50-works
+ * bar (>=20 works)" — i.e. a real signal on less evidence. A large sample
+ * with NO real concentration (e.g. 10 PSC categories at an even ~10%
+ * share each) stays `low`, not `medium` — lack of concentration is
+ * disqualifying on its own regardless of sample size, matching
+ * PSC-CROSSWALK.md § 4's treatment of genuine generalist mega-journals
+ * (Nature/Science/The Lancet) as `low`, never a partial-confidence tier.
+ * `unclassified` replaces the old `{ psc_category: null, psc_confidence:
+ * null }` case (no topics at all, or no topic maps to any PSC code) with
+ * an explicit, named state rather than a null sentinel.
  */
 
-export const PSC_CROSSWALK_VERSION = 'PSC-CROSSWALK-0.1'
+export const PSC_CROSSWALK_VERSION = 'PSC-CROSSWALK-0.2'
 
 /** Below this share of total topic-count mass, the winning PSC category
- * doesn't dominate clearly enough to trust. */
+ * doesn't dominate clearly enough to trust at the `high` tier. */
 export const CONFIDENCE_SHARE_THRESHOLD = 0.15
 /** Below this many OpenAlex-indexed works, even a dominant share is
- * unreliable — see PSC-CROSSWALK.md § 3 for the real misclassification
- * (a 41-work journal, confidently but wrongly classified) that showed a
- * share-only gate isn't sufficient on its own. */
+ * unreliable at the `high` tier — see PSC-CROSSWALK.md § 3 for the real
+ * misclassification (a 41-work journal, confidently but wrongly
+ * classified) that showed a share-only gate isn't sufficient on its own. */
 export const MIN_WORKS_COUNT = 50
+/** `medium` tier: the concentration gate is fully met (same
+ * CONFIDENCE_SHARE_THRESHOLD as `high`) but the sample is thinner than the
+ * `high` bar — this is the minimum sample size below which even a fully
+ * dominant share is discarded as noise (matches the "one or two
+ * dance-studies articles" order of magnitude that motivated MIN_WORKS_COUNT
+ * in the first place; below this, don't even offer `medium`). */
+export const MEDIUM_MIN_WORKS_COUNT = 20
+
+/** Confidence states that may be used to build an E-Q/M-Q/Citation-Q peer
+ * cohort (see cohort.mjs). `verified` is a human-confirmed classification
+ * (POSI Subject Editor sign-off) — this module never assigns it itself. */
+export const RANK_ELIGIBLE_PSC_CONFIDENCE = new Set(['high', 'verified'])
+
+/** @param {string|null|undefined} confidence
+ * @returns {boolean} whether this confidence level may enter a peer cohort
+ *   for E-Q/M-Q/Citation-Q ranking (framework: "Only `high` (or `verified`)
+ *   may enter a peer cohort"). `medium`/`low`/`unclassified` may still be
+ *   displayed as a suggested category, just never used for ranking. */
+export function isRankEligiblePscConfidence(confidence) {
+  return RANK_ELIGIBLE_PSC_CONFIDENCE.has(confidence)
+}
 
 // OpenAlex field -> PSC code, for fields that land in one PSC category
 // unambiguously.
@@ -118,12 +165,12 @@ export function mapToPsc(field, subfield) {
  * @param {{ count: number, field?: { display_name: string }, subfield?: { display_name: string } }[]} topics
  *   - a source's `topics` array from OpenAlex (GET /sources/issn:{issn}), unmodified
  * @param {number} worksCount - the source's works_count from the same OpenAlex record
- * @returns {{ psc_category: string|null, psc_confidence: 'high'|'low'|null }}
+ * @returns {{ psc_category: string|null, psc_confidence: 'high'|'medium'|'low'|'unclassified' }}
  */
 export function classifyPsc(topics, worksCount) {
-  if (!topics || topics.length === 0) return { psc_category: null, psc_confidence: null }
+  if (!topics || topics.length === 0) return { psc_category: null, psc_confidence: 'unclassified' }
   const total = topics.reduce((s, t) => s + (t.count ?? 0), 0)
-  if (total === 0) return { psc_category: null, psc_confidence: null }
+  if (total === 0) return { psc_category: null, psc_confidence: 'unclassified' }
 
   // Aggregate by mapped PSC category, not just the single top OpenAlex
   // topic — several distinct topics/subfields often map to the same PSC
@@ -135,10 +182,22 @@ export function classifyPsc(topics, worksCount) {
     if (!psc) continue
     byPsc.set(psc, (byPsc.get(psc) ?? 0) + (t.count ?? 0))
   }
-  if (byPsc.size === 0) return { psc_category: null, psc_confidence: null }
+  if (byPsc.size === 0) return { psc_category: null, psc_confidence: 'unclassified' }
 
   const [winningPsc, winningCount] = [...byPsc.entries()].sort((a, b) => b[1] - a[1])[0]
   const share = winningCount / total
-  const confident = share >= CONFIDENCE_SHARE_THRESHOLD && (worksCount ?? 0) >= MIN_WORKS_COUNT
-  return { psc_category: winningPsc, psc_confidence: confident ? 'high' : 'low' }
+  const works = worksCount ?? 0
+  const shareMeetsHighBar = share >= CONFIDENCE_SHARE_THRESHOLD
+
+  let confidence
+  if (shareMeetsHighBar && works >= MIN_WORKS_COUNT) {
+    confidence = 'high'
+  } else if (shareMeetsHighBar && works >= MEDIUM_MIN_WORKS_COUNT) {
+    // Concentration gate fully met, sample thinner than the `high` bar —
+    // see module header for why this is `medium`, not `low`.
+    confidence = 'medium'
+  } else {
+    confidence = 'low'
+  }
+  return { psc_category: winningPsc, psc_confidence: confidence }
 }
