@@ -56,11 +56,32 @@ function cacheKey(str) {
   return str.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 180)
 }
 
+/** A cached record is safe to trust forever only if it represents a
+ * PERMANENT outcome — a real success, or a real 404 (the resource
+ * genuinely doesn't exist). Everything else (429 rate/budget limit
+ * exhausted, 5xx, a network error that exhausted all retries) is a
+ * TRANSIENT failure and must NOT be cached as final — see the BUG FIX note
+ * below `isPermanentCacheRecord()`'s call site: caching a 429 forever
+ * defeated this script's own advertised resumability ("killing and
+ * re-running this script resumes without re-querying anything already
+ * cached") for exactly the case that matters most (an OpenAlex budget/rate
+ * limit that resets later) — a re-run would otherwise replay the same
+ * stale failure forever instead of actually retrying once the limit lifts.
+ */
+function isPermanentCacheRecord(record) {
+  return record.ok === true || record.status === 404
+}
+
 async function fetchJsonWithRetry(url, cacheDir, keyHint) {
   const key = cacheKey(keyHint)
   const cacheFile = join(cacheDir, `${key}.json`)
   if (existsSync(cacheFile)) {
-    return JSON.parse(readFileSync(cacheFile, 'utf-8'))
+    const cached = JSON.parse(readFileSync(cacheFile, 'utf-8'))
+    // BUG FIX: previously ANY cached file (including an exhausted-retry
+    // 429/5xx/network failure) was trusted forever, so a re-run after an
+    // OpenAlex rate/budget limit reset would silently keep returning the
+    // old failure instead of retrying — see isPermanentCacheRecord().
+    if (isPermanentCacheRecord(cached)) return cached
   }
   const maxAttempts = 5
   let lastError = null
