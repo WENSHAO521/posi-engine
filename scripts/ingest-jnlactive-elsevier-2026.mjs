@@ -26,6 +26,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
 import { parseCsv } from '../src/showjcr/csv.mjs'
+import { buildExistingIssnSet, validateConcurrency, partitionOpenAlexLookups } from '../src/migration/bulk-ingest-helpers.mjs'
 
 const OPENALEX_BASE = 'https://api.openalex.org'
 const SELECT_FIELDS = ['id', 'issn_l', 'issn', 'display_name', 'type', 'host_organization_name', 'homepage_url', 'is_oa', 'is_in_doaj', 'works_count', 'country_code']
@@ -141,14 +142,14 @@ async function main() {
   const csvPath = resolve(arg('csv'))
   const benchmarkPath = resolve(arg('benchmark'))
   const outDir = resolve(arg('out', 'jnlactive-ingest-output'))
-  const concurrency = parseInt(arg('concurrency', '6'), 10)
+  const concurrency = validateConcurrency(arg('concurrency', '6'))
   const limit = arg('limit') ? parseInt(arg('limit'), 10) : null
 
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true })
 
   const csvRows = parseJnlactiveCsv(readFileSync(csvPath, 'utf-8'))
   const benchmark = JSON.parse(readFileSync(benchmarkPath, 'utf-8'))
-  const existingIssns = new Set(benchmark.map(r => r.issn_online || r.issn_print).filter(Boolean))
+  const existingIssns = buildExistingIssnSet(benchmark)
 
   const allNewRows = csvRows.filter(r => !existingIssns.has(r.issn))
   const alreadyInBenchmarkCount = csvRows.length - allNewRows.length
@@ -168,8 +169,10 @@ async function main() {
   const errorCount = lookups.filter(l => l.result.status !== 200 && l.result.status !== 404).length
   console.log(`OpenAlex: found ${foundCount}, not_found (404) ${notFoundCount}, error ${errorCount}`)
 
+  const { ingestable, transientErrors } = partitionOpenAlexLookups(lookups)
+
   let seq = benchmark.length
-  const newRecords = lookups.map(({ row, result }) => {
+  const newRecords = ingestable.map(({ row, result }) => {
     seq++
     return buildRecord(row, result.source, seq)
   })
@@ -180,11 +183,11 @@ async function main() {
   const summary = {
     csv_total_rows: csvRows.length,
     already_in_benchmark: alreadyInBenchmarkCount,
-    remaining_not_yet_ingested: allNewRows.length - newRows.length,
+    remaining_not_yet_ingested: (allNewRows.length - newRows.length) + transientErrors.length,
     ingested: newRecords.length,
     openalex_found: foundCount,
     openalex_not_found_404: notFoundCount,
-    openalex_error: errorCount,
+    openalex_transient_error_excluded: errorCount,
     new_benchmark_total: updatedBenchmark.length,
   }
   writeFileSync(join(outDir, 'ingest-summary.json'), JSON.stringify(summary, null, 2), 'utf-8')
