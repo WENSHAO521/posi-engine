@@ -21,11 +21,31 @@ export const FETCH_STATUSES = Object.freeze([
   'not_found',
   'forbidden',
   'rate_limited',
+  'server_error',
+  'http_error',
   'timeout',
   'network_error',
   'robots_blocked',
   'parse_error',
 ])
+
+/** fetch_status values that mean "we asked and got a definitive, resolved
+ * answer that this specific URL doesn't exist" -- NOT a fetch problem, and
+ * must never be treated as blocking resolver confidence the way
+ * server_error/http_error/timeout/network_error/robots_blocked do. A 404
+ * on one guessed candidate path says nothing about whether the *criterion*
+ * is met/not_met -- that's still decided by whatever else got checked. */
+export const CLEAN_ABSENCE_STATUSES = Object.freeze(['not_found'])
+
+/** fetch_status values that mean "something blocked us specifically" --
+ * evidence-resolver.mjs maps these toward `blocked`, never `not_met`. */
+export const BLOCKING_STATUSES = Object.freeze(['forbidden', 'rate_limited', 'robots_blocked'])
+
+/** fetch_status values that mean "we don't know" for a reason unrelated to
+ * deliberate blocking (server-side failure, our own timeout, a network
+ * problem, a response we couldn't parse) -- evidence-resolver.mjs maps
+ * these toward `unknown`, never `not_met`. */
+export const UNKNOWN_STATUSES = Object.freeze(['server_error', 'http_error', 'timeout', 'network_error', 'parse_error'])
 
 /**
  * @param {number} httpStatus
@@ -38,13 +58,17 @@ export function classifyHttpStatus(httpStatus) {
   if (httpStatus === 403) return 'forbidden'
   if (httpStatus === 404) return 'not_found'
   if (httpStatus === 429) return 'rate_limited'
-  // Any other non-2xx (3xx exhausted past redirect-follow, other 4xx, 5xx)
-  // is still a real, distinct outcome from "not found" -- reported as
-  // not_found's sibling `other_error` would over-fragment the enum the
-  // framework asked for, so 5xx/other 4xx fold into not_found (the page is
-  // not usably available) but keep the real httpStatus alongside it for
-  // the fetch-event log, so nothing is actually lost.
-  return 'not_found'
+  // 5xx and other non-{200s,403,404,429} 4xx (401, 451, exhausted 3xx, ...)
+  // must NOT collapse into `not_found` -- a 404 is a resolved "this URL
+  // genuinely doesn't exist" answer; a 500 or a 401 is "something went
+  // wrong and we don't actually know what's at this URL," which
+  // evidence-coverage.mjs's own classifyFetchOutcomeStatus() already
+  // treats as `unknown`, never as a clean absence. Collapsing them
+  // together here would let a transient server error on a policy page get
+  // read downstream exactly like "we successfully confirmed this page
+  // doesn't exist," which is a different, much stronger claim.
+  if (httpStatus >= 500) return 'server_error'
+  return 'http_error'
 }
 
 /**

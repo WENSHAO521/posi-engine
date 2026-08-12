@@ -16,14 +16,24 @@
  * Chinese-language journal despite the policy content being plainly
  * present on the page.
  *
- * fetch_status -> unknown/blocked mapping is NOT reimplemented here --
- * this module calls evidence-coverage.mjs's classifyFetchOutcomeStatus()
- * so there is exactly one place that decision is made.
+ * CRITICAL, review-caught bug fixed here (not the original design): a
+ * criterion must never resolve `not_met` just because *some* page on the
+ * journal's site fetched OK -- "homepage 200, /publication-ethics 403"
+ * must resolve `publication_ethics` as `blocked`, not `not_met`, because
+ * the page most likely to actually contain that policy is the one that
+ * failed. `resolveCriterion()` below is criterion-aware: it only concludes
+ * `not_met` once every page *relevant to this specific criterion* that was
+ * attempted either succeeded (and didn't match) or came back a clean 404
+ * (a guessed path that simply doesn't exist here, not a fetch problem). A
+ * blocking or unknown-worthy outcome among the relevant set wins over a
+ * confident absence -- see evidence-fetch.mjs's BLOCKING_STATUSES /
+ * UNKNOWN_STATUSES / CLEAN_ABSENCE_STATUSES, which this module reads
+ * directly rather than going through evidence-coverage.mjs's coarser
+ * fetch-outcome mapping (which only sees a single winning outcome per
+ * journal, not per criterion).
  */
 
-import { classifyFetchOutcomeStatus } from './evidence-coverage.mjs'
-
-/** @typedef {{ url: string, fetch_status: string, http_status: number|null, body: string|null }} FetchedPage */
+import { BLOCKING_STATUSES, UNKNOWN_STATUSES } from './evidence-fetch.mjs'
 
 function hasAny(text, patterns) {
   if (!text) return false
@@ -31,60 +41,111 @@ function hasAny(text, patterns) {
   return patterns.some(p => lower.includes(p))
 }
 
+/** Path substrings (matched against a fetched URL's pathname, case-
+ * insensitive) that are ALWAYS considered relevant to every criterion --
+ * a journal's homepage, its OJS "About the Journal" submenu, and its
+ * submissions page frequently bundle several policies onto one page even
+ * when a dedicated criterion-specific path also exists. `homepage` is a
+ * synthetic marker resolved against the journal's own website_url, not a
+ * literal substring. */
+const ALWAYS_RELEVANT_PATH_SUBSTRINGS = ['/about', '/about/submissions', '/about/editorialteam', '/about/editorialmasthead']
+
 /**
  * Evidence Coverage weights below match AJR-E-1.1-SPEC.md's item tables
  * exactly (Dimension 1 §3, Dimension 2 §4, Dimension 7 §9) -- these are
  * not independently invented weights, they're the already-frozen spec
  * values, so a dimensionScore() computed from this module's output lines
  * up with the spec without a separate reconciliation step.
+ *
+ * `relevantPathKeywords`: path substrings (beyond the always-relevant set
+ * above) considered specifically about this criterion -- used to decide
+ * whether a failed fetch is evidence this criterion is unresolved
+ * (relevant page failed) or just an irrelevant miss elsewhere on the site.
  */
 export const EVIDENCE_CRITERIA = Object.freeze([
   // --- Dimension 1: Editorial Governance & Peer Review (AJR-E-1.1-SPEC.md § 3) ---
   { id: 'aims_scope', dimension: 'editorial_governance', weight: 2,
-    patterns: ['aim and scope', 'aims and scope', 'about the journal', 'journal focus', 'focus and scope', '宗旨', '办刊宗旨', '期刊简介', '关于本刊'] },
+    patterns: ['aim and scope', 'aims and scope', 'about the journal', 'journal focus', 'focus and scope', '宗旨', '办刊宗旨', '期刊简介', '关于本刊'],
+    relevantPathKeywords: ['aims-and-scope', 'aim-and-scope'] },
   { id: 'editorial_board', dimension: 'editorial_governance', weight: 3,
-    patterns: ['editorial board', 'editorial team', 'board of editors', 'editorial masthead', '编辑委员会', '编委会'] },
+    patterns: ['editorial board', 'editorial team', 'board of editors', 'editorial masthead', '编辑委员会', '编委会'],
+    relevantPathKeywords: ['editorial-board', 'editorialteam', 'editorialmasthead'] },
   { id: 'editor_identity', dimension: 'editorial_governance', weight: 2,
-    patterns: ['editor-in-chief', 'editor in chief', 'chief editor', 'associate editor', 'affiliation', '主编', '副主编', '编辑'] },
+    patterns: ['editor-in-chief', 'editor in chief', 'chief editor', 'associate editor', 'affiliation', '主编', '副主编', '编辑'],
+    relevantPathKeywords: ['editorial-board', 'editorialteam', 'editorialmasthead'] },
   { id: 'peer_review_disclosed', dimension: 'editorial_governance', weight: 4,
-    patterns: ['peer review', 'peer-review', 'peer reviewed', 'double-blind', 'single-blind', 'double blind review', '同行评审', '同行评议', '双盲评审', '盲审'] },
+    patterns: ['peer review', 'peer-review', 'peer reviewed', 'double-blind', 'single-blind', 'double blind review', '同行评审', '同行评议', '双盲评审', '盲审'],
+    relevantPathKeywords: ['peer-review', 'editorial-policies'] },
   { id: 'reviewer_guidelines', dimension: 'editorial_governance', weight: 2,
-    patterns: ['reviewer guideline', 'review guideline', 'guide for reviewer', 'reviewer instructions', '审稿指南', '审稿人指南', '评审指南'] },
+    patterns: ['reviewer guideline', 'review guideline', 'guide for reviewer', 'reviewer instructions', '审稿指南', '审稿人指南', '评审指南'],
+    relevantPathKeywords: ['peer-review', 'editorial-policies', 'for-authors'] },
   { id: 'complaints_appeals', dimension: 'editorial_governance', weight: 2,
-    patterns: ['complaint', 'appeal', 'grievance', 'dispute resolution', '投诉', '申诉', '异议'] },
+    patterns: ['complaint', 'appeal', 'grievance', 'dispute resolution', '投诉', '申诉', '异议'],
+    relevantPathKeywords: ['editorial-policies', 'publication-ethics', 'ethics'] },
 
   // --- Dimension 2: Research Integrity (AJR-E-1.1-SPEC.md § 4) ---
   { id: 'publication_ethics', dimension: 'research_integrity', weight: 3,
-    patterns: ['publication ethics', 'ethics statement', 'ethics and misconduct', 'misconduct policy', 'code of conduct', '出版伦理', '学术不端', '科研诚信'] },
+    patterns: ['publication ethics', 'ethics statement', 'ethics and misconduct', 'misconduct policy', 'code of conduct', '出版伦理', '学术不端', '科研诚信'],
+    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
   { id: 'corrections_retractions', dimension: 'research_integrity', weight: 3,
-    patterns: ['retraction', 'correction policy', 'errata', 'erratum', 'corrigendum', '勘误', '撤稿', '更正声明'] },
+    patterns: ['retraction', 'correction policy', 'errata', 'erratum', 'corrigendum', '勘误', '撤稿', '更正声明'],
+    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies', 'corrections', 'retractions'] },
   { id: 'authorship_policy', dimension: 'research_integrity', weight: 2,
-    patterns: ['authorship criteria', 'authorship policy', 'contributorship', 'author contribution', 'credit taxonomy', '作者身份', '署名规范', '作者贡献'] },
+    patterns: ['authorship criteria', 'authorship policy', 'contributorship', 'author contribution', 'credit taxonomy', '作者身份', '署名规范', '作者贡献'],
+    relevantPathKeywords: ['publication-ethics', 'ethics', 'author-guidelines', 'for-authors'] },
   { id: 'coi_policy', dimension: 'research_integrity', weight: 2,
-    patterns: ['conflict of interest', 'competing interest', 'coi disclosure', '利益冲突', '利益相关'] },
+    patterns: ['conflict of interest', 'competing interest', 'coi disclosure', '利益冲突', '利益相关'],
+    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
   { id: 'plagiarism_policy', dimension: 'research_integrity', weight: 2,
-    patterns: ['plagiarism', 'similarity check', 'turnitin', 'ithenticate', 'similarity index', '抄袭', '查重', '相似度检测', '剽窃'] },
+    patterns: ['plagiarism', 'similarity check', 'turnitin', 'ithenticate', 'similarity index', '抄袭', '查重', '相似度检测', '剽窃'],
+    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
   { id: 'human_animal_ethics', dimension: 'research_integrity', weight: 1,
-    patterns: ['informed consent', 'animal welfare', 'institutional review board', 'ethics committee approval', 'human subjects', '知情同意', '伦理委员会', '动物福利'] },
+    patterns: ['informed consent', 'animal welfare', 'institutional review board', 'ethics committee approval', 'human subjects', '知情同意', '伦理委员会', '动物福利'],
+    relevantPathKeywords: ['publication-ethics', 'ethics'] },
   { id: 'data_availability', dimension: 'research_integrity', weight: 1,
-    patterns: ['data availability', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'] },
+    patterns: ['data availability', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'],
+    relevantPathKeywords: ['data-policy', 'author-guidelines', 'for-authors'] },
   { id: 'ai_use_policy', dimension: 'research_integrity', weight: 1,
-    patterns: ['use of ai', 'artificial intelligence policy', 'generative ai', 'chatgpt', 'large language model', 'ai-assisted', '人工智能政策', '生成式人工智能', '大语言模型'] },
+    patterns: ['use of ai', 'artificial intelligence policy', 'generative ai', 'chatgpt', 'large language model', 'ai-assisted', '人工智能政策', '生成式人工智能', '大语言模型'],
+    relevantPathKeywords: ['ai-policy', 'author-guidelines', 'for-authors', 'publication-ethics'] },
 
   // --- Dimension 7: Transparency & Access Policy (AJR-E-1.1-SPEC.md § 9) ---
   { id: 'apc_disclosure', dimension: 'transparency', weight: 2,
-    patterns: ['article processing charge', 'apc', 'publication fee', 'processing fee', 'no fee', 'fee waiver', '版面费', '发表费', '审稿费', '费用减免'] },
+    patterns: ['article processing charge', 'apc', 'publication fee', 'processing fee', 'no fee', 'fee waiver', '版面费', '发表费', '审稿费', '费用减免'],
+    relevantPathKeywords: ['apc', 'fees', 'for-authors', 'submissions'] },
   { id: 'copyright_licensing', dimension: 'transparency', weight: 2,
-    patterns: ['creative commons', 'cc by', 'copyright notice', 'copyright policy', '知识共享', '版权声明', '版权政策'] },
+    patterns: ['creative commons', 'cc by', 'copyright notice', 'copyright policy', '知识共享', '版权声明', '版权政策'],
+    relevantPathKeywords: ['copyright', 'licensing', 'for-authors'] },
   { id: 'access_model_disclosure', dimension: 'transparency', weight: 1,
-    patterns: ['open access', 'subscription', 'hybrid journal', 'access model', '开放获取', '开放存取', '订阅'] },
+    patterns: ['open access', 'subscription', 'hybrid journal', 'access model', '开放获取', '开放存取', '订阅'],
+    relevantPathKeywords: ['copyright', 'licensing', 'apc'] },
   { id: 'publisher_contact', dimension: 'transparency', weight: 2,
-    patterns: ['publisher', 'contact us', 'contact information', 'mailing address', '出版商', '联系我们', '联系方式'] },
+    patterns: ['publisher', 'contact us', 'contact information', 'mailing address', '出版商', '联系我们', '联系方式'],
+    relevantPathKeywords: [] },
   { id: 'author_guidelines', dimension: 'transparency', weight: 1,
-    patterns: ['author guideline', 'guide for authors', 'submission guideline', 'manuscript preparation', '投稿指南', '作者指南', '稿约'] },
+    patterns: ['author guideline', 'guide for authors', 'submission guideline', 'manuscript preparation', '投稿指南', '作者指南', '稿约'],
+    relevantPathKeywords: ['author-guidelines', 'for-authors', 'submissions'] },
   { id: 'advertising_disclosure', dimension: 'transparency', weight: 1,
-    patterns: ['advertising policy', 'sponsorship', 'advertisement disclosure', '广告政策', '赞助声明'] },
+    patterns: ['advertising policy', 'sponsorship', 'advertisement disclosure', '广告政策', '赞助声明'],
+    relevantPathKeywords: [] },
 ])
+
+/** @typedef {{ url: string, fetch_status: string, http_status: number|null, body: string|null }} FetchedPage */
+
+/**
+ * @param {string} url
+ * @param {string|null} websiteUrl - the journal's own base URL, so the
+ *   homepage itself (which may have no distinguishing path substring) is
+ *   always recognized as relevant.
+ * @param {string[]} relevantPathKeywords
+ * @returns {boolean}
+ */
+function isRelevantPage(url, websiteUrl, relevantPathKeywords) {
+  if (websiteUrl && url.replace(/\/+$/, '') === websiteUrl.replace(/\/+$/, '')) return true
+  const lower = url.toLowerCase()
+  if (ALWAYS_RELEVANT_PATH_SUBSTRINGS.some(p => lower.includes(p))) return true
+  return relevantPathKeywords.some(k => lower.includes(k))
+}
 
 /**
  * @param {{id: string, patterns: string[]}} criterion
@@ -107,39 +168,55 @@ function detectCriterionInPages(criterion, fetchedPages) {
  * @param {object} criterion - one EVIDENCE_CRITERIA entry
  * @param {FetchedPage[]} fetchedPages - every page fetched for this journal
  *   (homepage + candidate/discovered subpages), regardless of outcome.
+ * @param {string|null} [websiteUrl] - the journal's base URL, for
+ *   recognizing the homepage itself as always-relevant.
  * @returns {{ id: string, weight: number, status: string, source_url: string|null, retrieved_at: string|null }}
  */
-export function resolveCriterion(criterion, fetchedPages) {
-  const okPages = fetchedPages.filter(p => p.fetch_status === 'ok')
+export function resolveCriterion(criterion, fetchedPages, websiteUrl = null) {
   const { matched, sourceUrl } = detectCriterionInPages(criterion, fetchedPages)
-
   if (matched) {
     return { id: criterion.id, weight: criterion.weight, status: 'met', source_url: sourceUrl, retrieved_at: fetchedPages.find(p => p.url === sourceUrl)?.retrieved_at ?? null }
   }
 
-  if (okPages.length > 0) {
-    // At least one page fetched successfully but the pattern never
-    // matched anywhere -- a real, resolved "not disclosed" answer, not a
-    // fetch problem. Cite the homepage (or first ok page) as the checked
-    // source so a reader can go verify.
-    return { id: criterion.id, weight: criterion.weight, status: 'not_met', source_url: okPages[0].url, retrieved_at: okPages[0].retrieved_at }
+  const relevantPages = fetchedPages.filter(p => isRelevantPage(p.url, websiteUrl, criterion.relevantPathKeywords))
+
+  if (relevantPages.length === 0) {
+    // Nothing plausibly about this criterion was even attempted -- not the
+    // same as having checked and found nothing.
+    return { id: criterion.id, weight: criterion.weight, status: 'unknown', source_url: null, retrieved_at: null }
   }
 
-  // Nothing fetched successfully at all for this journal -- fall back to
-  // the worst (most-blocking) outcome among every attempted fetch, via
-  // evidence-coverage.mjs's single shared outcome->status mapping.
-  const outcomes = fetchedPages.map(p => p.fetch_status === 'ok' ? null : (p.http_status ?? p.fetch_status))
-  const worstOutcome = outcomes.find(o => o === 403 || o === 429 || o === 'forbidden' || o === 'rate_limited') ?? outcomes[0] ?? null
-  const normalizedOutcome = worstOutcome === 'forbidden' ? 403 : worstOutcome === 'rate_limited' ? 429 : worstOutcome === 'timeout' ? 'timeout' : worstOutcome === 'network_error' ? 'network_error' : worstOutcome
-  const status = fetchedPages.length === 0 ? 'unknown' : classifyFetchOutcomeStatus(normalizedOutcome)
-  return { id: criterion.id, weight: criterion.weight, status, source_url: null, retrieved_at: null }
+  const blocked = relevantPages.find(p => BLOCKING_STATUSES.includes(p.fetch_status))
+  if (blocked) {
+    return { id: criterion.id, weight: criterion.weight, status: 'blocked', source_url: null, retrieved_at: null }
+  }
+  const unresolved = relevantPages.find(p => UNKNOWN_STATUSES.includes(p.fetch_status))
+  if (unresolved) {
+    return { id: criterion.id, weight: criterion.weight, status: 'unknown', source_url: null, retrieved_at: null }
+  }
+
+  // Every relevant page attempted was either fetched OK (and searched, no
+  // match) or came back a clean 404 (the guessed path just doesn't exist
+  // here) -- a genuinely resolved absence.
+  const okRelevant = relevantPages.find(p => p.fetch_status === 'ok')
+  if (okRelevant) {
+    return { id: criterion.id, weight: criterion.weight, status: 'not_met', source_url: okRelevant.url, retrieved_at: okRelevant.retrieved_at }
+  }
+
+  // Every relevant page (including the homepage, which is always in
+  // relevantPages) came back a clean 404 -- meaning the homepage itself
+  // 404'd, since a successful homepage fetch would already have satisfied
+  // the okRelevant branch above. A dead/wrong base URL is not evidence of
+  // a confident absence -- unresolved, not not_met.
+  return { id: criterion.id, weight: criterion.weight, status: 'unknown', source_url: null, retrieved_at: null }
 }
 
 /**
  * @param {FetchedPage[]} fetchedPages - every page fetched for one journal.
+ * @param {string|null} [websiteUrl]
  * @returns {ReturnType<typeof resolveCriterion>[]} one item per
  *   EVIDENCE_CRITERIA entry, ready for evidence-coverage.mjs.
  */
-export function resolveAllCriteria(fetchedPages) {
-  return EVIDENCE_CRITERIA.map(c => resolveCriterion(c, fetchedPages))
+export function resolveAllCriteria(fetchedPages, websiteUrl = null) {
+  return EVIDENCE_CRITERIA.map(c => resolveCriterion(c, fetchedPages, websiteUrl))
 }

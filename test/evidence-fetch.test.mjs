@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyHttpStatus, classifyFetchException, isPathDisallowedByRobots } from '../src/evidence-fetch.mjs'
+import { classifyHttpStatus, classifyFetchException, isPathDisallowedByRobots, BLOCKING_STATUSES, UNKNOWN_STATUSES, CLEAN_ABSENCE_STATUSES } from '../src/evidence-fetch.mjs'
 
 test('classifyHttpStatus: 2xx is ok, 403/404/429 are their own distinct statuses', () => {
   assert.equal(classifyHttpStatus(200), 'ok')
@@ -10,10 +10,33 @@ test('classifyHttpStatus: 2xx is ok, 403/404/429 are their own distinct statuses
   assert.equal(classifyHttpStatus(429), 'rate_limited')
 })
 
-test('classifyHttpStatus: 5xx and other 4xx are not silently "ok" or conflated with 403/429', () => {
-  assert.equal(classifyHttpStatus(500), 'not_found')
-  assert.equal(classifyHttpStatus(502), 'not_found')
-  assert.equal(classifyHttpStatus(401), 'not_found')
+test('classifyHttpStatus: 5xx is server_error, other unclassified 4xx is http_error -- neither collapses into not_found (review-caught bug)', () => {
+  // A 404 is a resolved "this URL genuinely doesn't exist" answer. A 500
+  // or a 401 is "something went wrong, we don't know what's really at this
+  // URL" -- collapsing them together would let a transient server error on
+  // a policy page read downstream exactly like a confirmed clean absence.
+  assert.equal(classifyHttpStatus(500), 'server_error')
+  assert.equal(classifyHttpStatus(502), 'server_error')
+  assert.equal(classifyHttpStatus(503), 'server_error')
+  assert.equal(classifyHttpStatus(401), 'http_error')
+  assert.equal(classifyHttpStatus(451), 'http_error')
+})
+
+test('server_error and http_error are both in UNKNOWN_STATUSES, never in CLEAN_ABSENCE_STATUSES or BLOCKING_STATUSES', () => {
+  assert.ok(UNKNOWN_STATUSES.includes('server_error'))
+  assert.ok(UNKNOWN_STATUSES.includes('http_error'))
+  assert.ok(!CLEAN_ABSENCE_STATUSES.includes('server_error'))
+  assert.ok(!CLEAN_ABSENCE_STATUSES.includes('http_error'))
+  assert.ok(!BLOCKING_STATUSES.includes('server_error'))
+  assert.ok(!BLOCKING_STATUSES.includes('http_error'))
+})
+
+test('CLEAN_ABSENCE_STATUSES contains only not_found -- a 404 is the only outcome that means "resolved, does not exist"', () => {
+  assert.deepEqual([...CLEAN_ABSENCE_STATUSES], ['not_found'])
+})
+
+test('BLOCKING_STATUSES is exactly forbidden/rate_limited/robots_blocked', () => {
+  assert.deepEqual([...BLOCKING_STATUSES].sort(), ['forbidden', 'rate_limited', 'robots_blocked'].sort())
 })
 
 test('classifyFetchException: AbortSignal.timeout() rejections are timeout, everything else is network_error', () => {
