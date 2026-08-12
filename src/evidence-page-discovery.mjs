@@ -54,16 +54,19 @@ const DISCOVERY_KEYWORDS = [
 
 /**
  * Extracts same-origin candidate links from an HTML page via a plain
- * regex `<a href="...">` scan -- no DOM/HTML parser dependency added
- * (matching this repo's existing minimal-dependency convention). This is
- * intentionally permissive rather than a full HTML parse: false positives
- * (a link that matches a keyword but isn't actually a policy page) just
- * cost one extra fetch and get filtered out downstream by having no
- * matching evidence signal; false negatives (missing a real policy link)
- * are the worse failure mode this exists to avoid.
+ * regex `<a href="...">...</a>` scan -- no DOM/HTML parser dependency
+ * added (matching this repo's existing minimal-dependency convention).
+ * This is intentionally permissive rather than a full HTML parse: false
+ * positives (a link that matches a keyword but isn't actually a policy
+ * page) just cost one extra fetch and get filtered out downstream by
+ * having no matching evidence signal; false negatives (missing a real
+ * policy link) are the worse failure mode this exists to avoid.
  * @param {string} html
- * @param {string} baseUrl - the page's own URL, for same-origin filtering
- *   and resolving relative hrefs.
+ * @param {string} baseUrl - the URL of the page THIS html came from (not
+ *   necessarily the journal's homepage) -- both for resolving relative
+ *   hrefs correctly (an `href="ethics"` found on `/about` must resolve to
+ *   `/about/ethics`, not to a root-relative `/ethics`) and for same-origin
+ *   filtering.
  * @returns {string[]} deduplicated, same-origin, keyword-matching URLs
  */
 export function discoverLinks(html, baseUrl) {
@@ -75,24 +78,34 @@ export function discoverLinks(html, baseUrl) {
     return []
   }
 
-  const hrefPattern = /<a\s+[^>]*href\s*=\s*["']([^"'#]+)["']/gi
+  // Captures the href attribute AND the anchor's inner text -- review-
+  // caught gap: a link like <a href="/node/123">Publication Ethics</a>
+  // has a URL with no policy-shaped substring at all, but the link TEXT
+  // plainly says what it is. Checking hrefs alone missed exactly this
+  // shape, which is common on non-OJS/custom CMS journal sites.
+  const anchorPattern = /<a\s+[^>]*href\s*=\s*["']([^"'#]+)["'][^>]*>(.*?)<\/a>/gis
   const found = new Set()
   let match
-  while ((match = hrefPattern.exec(html)) !== null) {
+  while ((match = anchorPattern.exec(html)) !== null) {
     const raw = match[1].trim()
+    const linkText = match[2].replace(/<[^>]+>/g, ' ').trim()
     if (!raw || raw.startsWith('mailto:') || raw.startsWith('tel:') || raw.startsWith('javascript:')) continue
 
     let resolved
     try {
-      resolved = new URL(raw, baseUrl).toString()
+      resolved = new URL(raw, baseUrl)
     } catch {
       continue
     }
-    if (!resolved.startsWith(origin)) continue
+    // Exact origin equality, not startsWith() -- review-caught bug:
+    // "https://example.com.attacker.test/ethics".startsWith(
+    // "https://example.com") is true, so a naive prefix check would treat
+    // an entirely different, attacker-controlled domain as same-origin.
+    if (resolved.origin !== origin) continue
 
-    const lower = resolved.toLowerCase()
-    if (DISCOVERY_KEYWORDS.some(kw => lower.includes(kw))) {
-      found.add(resolved.replace(/\/$/, ''))
+    const haystack = `${resolved.toString().toLowerCase()} ${linkText.toLowerCase()}`
+    if (DISCOVERY_KEYWORDS.some(kw => haystack.includes(kw))) {
+      found.add(resolved.toString().replace(/\/$/, ''))
     }
   }
   return [...found]

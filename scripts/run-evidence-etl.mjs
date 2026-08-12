@@ -97,16 +97,42 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry }
   const websiteUrl = journal.website_url
 
   if (!websiteUrl) {
+    // Full-shape output (all 21 criteria present, status 'unknown' except
+    // other_applicable_terms which is always 'not_applicable') instead of
+    // an empty evidence_items array -- review-caught gap: downstream
+    // consumers (AJR-E scoring, coverage aggregation) expect a consistent
+    // per-journal shape regardless of whether a crawl was even possible.
+    const evidenceItems = resolveAllCriteria([], null)
+    const coverage = evidenceCoverage(evidenceItems)
     return {
       posi_id: posiId, journal_code: journal.journal_code, title: journal.title,
-      website_url: null, fetched_pages: [], evidence_items: [],
-      coverage: { coverage_percent: 0, applicable_weight: 0, resolved_weight: 0, met_weight: 0, not_applicable_weight: 0 },
-      site_evidence_coverage_percent: 0,
+      website_url: null, fetched_pages: [], evidence_items: evidenceItems,
+      coverage, site_evidence_coverage_percent: coverage.coverage_percent,
+      evidence_methodology_version: EVIDENCE_COVERAGE_METHODOLOGY_VERSION,
+      snapshot_date: new Date().toISOString().slice(0, 10),
       note: 'no website_url on record -- nothing to crawl',
     }
   }
 
-  const origin = new URL(websiteUrl).origin
+  let origin
+  try {
+    origin = new URL(websiteUrl).origin
+  } catch {
+    // Malformed website_url -- isolate to this journal, never throw and
+    // abort the whole batch. Review-caught gap: `new URL()` here was
+    // unguarded, and main()'s loop had no try/catch around crawlJournal(),
+    // so one bad URL among 1000 journals would have crashed the entire run.
+    const evidenceItems = resolveAllCriteria([], null)
+    const coverage = evidenceCoverage(evidenceItems)
+    return {
+      posi_id: posiId, journal_code: journal.journal_code, title: journal.title,
+      website_url: websiteUrl, fetched_pages: [], evidence_items: evidenceItems,
+      coverage, site_evidence_coverage_percent: coverage.coverage_percent,
+      evidence_methodology_version: EVIDENCE_COVERAGE_METHODOLOGY_VERSION,
+      snapshot_date: new Date().toISOString().slice(0, 10),
+      note: `malformed website_url, could not parse: ${websiteUrl}`,
+    }
+  }
   const isDisallowed = await fetchRobotsDisallowChecker(websiteUrl)
 
   const candidates = candidateUrls(websiteUrl)
@@ -136,7 +162,12 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry }
   const seedPages = fetchedPages.filter(p => p.fetch_status === 'ok' && p.body)
   const discoveredLinks = new Set()
   for (const page of seedPages.slice(0, 3)) {
-    for (const link of discoverLinks(page.body, websiteUrl)) discoveredLinks.add(link)
+    // Resolve relative hrefs against the page THEY WERE FOUND ON
+    // (page.url), not the journal's homepage -- review-caught bug: an
+    // href="ethics" found on /about must resolve to /about/ethics, not to
+    // a root-relative /ethics, which is what passing websiteUrl here
+    // produced.
+    for (const link of discoverLinks(page.body, page.url)) discoveredLinks.add(link)
   }
   const alreadyFetched = new Set(fetchedPages.map(p => p.url))
   const candidateNewLinks = [...discoveredLinks].filter(u => !alreadyFetched.has(u)).slice(0, Math.max(0, MAX_PAGES_PER_JOURNAL - fetchedPages.length))
@@ -198,6 +229,19 @@ async function main() {
   const concurrency = parseInt(arg('concurrency', '4'), 10)
   const delayMs = parseInt(arg('delay-ms', '500'), 10)
 
+  // Review-caught gap: an unvalidated concurrency (0, NaN, negative) makes
+  // runBatch()'s `for (let i = 0; i < items.length; i += concurrency)`
+  // loop either infinite (i never advances) or never execute -- fail loud
+  // and immediately instead of hanging or silently processing nothing.
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    console.error(`--concurrency must be a positive integer, got: ${arg('concurrency', '4')}`)
+    process.exit(1)
+  }
+  if (!Number.isInteger(delayMs) || delayMs < 0) {
+    console.error(`--delay-ms must be a non-negative integer, got: ${arg('delay-ms', '500')}`)
+    process.exit(1)
+  }
+
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true })
   const journalsOutDir = join(outDir, 'journals')
   if (!existsSync(journalsOutDir)) mkdirSync(journalsOutDir, { recursive: true })
@@ -213,7 +257,25 @@ async function main() {
   for (let i = 0; i < targets.length; i++) {
     const j = targets[i]
     process.stdout.write(`[${i + 1}/${targets.length}] ${j.title} (${j.posi_id ?? 'NO POSI_ID'}) ... `)
-    const result = await crawlJournal(j, { concurrency, delayMs, publisherRegistry })
+    let result
+    try {
+      result = await crawlJournal(j, { concurrency, delayMs, publisherRegistry })
+    } catch (err) {
+      // Defense in depth beyond crawlJournal()'s own malformed-URL guard --
+      // one journal's unexpected failure must never abort a 1000-journal
+      // batch run and lose all prior progress.
+      console.log(`ERROR (isolated to this journal): ${err?.message ?? err}`)
+      const evidenceItems = resolveAllCriteria([], null)
+      const coverage = evidenceCoverage(evidenceItems)
+      result = {
+        posi_id: j.posi_id, journal_code: j.journal_code, title: j.title,
+        website_url: j.website_url ?? null, fetched_pages: [], evidence_items: evidenceItems,
+        coverage, site_evidence_coverage_percent: coverage.coverage_percent,
+        evidence_methodology_version: EVIDENCE_COVERAGE_METHODOLOGY_VERSION,
+        snapshot_date: new Date().toISOString().slice(0, 10),
+        note: `unexpected error during crawl, isolated: ${err?.message ?? err}`,
+      }
+    }
     results.push(result)
     writeFileSync(join(journalsOutDir, `${result.posi_id ?? j.journal_code}.json`), JSON.stringify(result, null, 2), 'utf-8')
     console.log(`site evidence coverage ${result.site_evidence_coverage_percent}% (${result.fetched_pages.length} pages fetched)`)
@@ -221,7 +283,7 @@ async function main() {
 
   // --- Coverage distribution + error-mode summary ---
   const distribution = { '100%': 0, '90-99%': 0, '80-89%': 0, '60-79%': 0, '<60%': 0 }
-  let blockedCount = 0, notFoundFetchCount = 0, conflictedCount = 0, staleCount = 0, unknownCount = 0, metCount = 0, notMetCount = 0
+  let blockedCount = 0, notFoundFetchCount = 0, conflictedCount = 0, staleCount = 0, unknownCount = 0, metCount = 0, notMetCount = 0, notApplicableCount = 0
   for (const r of results) {
     distribution[bucketCoverage(r.site_evidence_coverage_percent)]++
     for (const item of r.evidence_items) {
@@ -231,6 +293,7 @@ async function main() {
       if (item.status === 'stale') staleCount++
       if (item.status === 'met') metCount++
       if (item.status === 'not_met') notMetCount++
+      if (item.status === 'not_applicable') notApplicableCount++
     }
     for (const p of r.fetched_pages) {
       if (p.fetch_status === 'not_found') notFoundFetchCount++
@@ -245,7 +308,7 @@ async function main() {
     total_pages_ok: results.reduce((s, r) => s + r.fetched_pages.filter(p => p.fetch_status === 'ok').length, 0),
     site_evidence_coverage_distribution: distribution,
     evidence_item_status_counts: {
-      met: metCount, not_met: notMetCount, blocked: blockedCount, unknown: unknownCount, conflicted: conflictedCount, stale: staleCount,
+      met: metCount, not_met: notMetCount, blocked: blockedCount, unknown: unknownCount, conflicted: conflictedCount, stale: staleCount, not_applicable: notApplicableCount,
     },
     fetch_404_count: notFoundFetchCount,
     mean_site_evidence_coverage_percent: Math.round((results.reduce((s, r) => s + r.site_evidence_coverage_percent, 0) / results.length) * 100) / 100,

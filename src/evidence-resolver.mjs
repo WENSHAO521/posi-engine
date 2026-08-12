@@ -31,6 +31,19 @@
  * directly rather than going through evidence-coverage.mjs's coarser
  * fetch-outcome mapping (which only sees a single winning outcome per
  * journal, not per criterion).
+ *
+ * SECOND review-caught defect fixed here: criterion `id`s originally did
+ * not match the canonical evidence item ids `src/ajr-early-stage.mjs`
+ * (EDITORIAL_GOVERNANCE_ITEMS / RESEARCH_INTEGRITY_ITEMS) and
+ * `src/shared-dimensions.mjs` (TRANSPARENCY_ITEMS) actually key their
+ * scoring on -- e.g. this module emitted `aims_scope` while AJR-E expects
+ * `aims_scope_explicit`. Feeding this module's output straight into
+ * `computeAjrE()` would have silently read every real match as `unknown`
+ * (the id simply wouldn't be found in `itemStatuses`), discarding a fully
+ * resolved crawl. Every id below is now copied verbatim from those two
+ * files -- see `test/evidence-resolver.test.mjs`'s "every AJR-E evidence
+ * item has exactly one resolver mapping" contract test, which fails loudly
+ * if the two ever drift apart again.
  */
 
 import { BLOCKING_STATUSES, UNKNOWN_STATUSES } from './evidence-fetch.mjs'
@@ -67,54 +80,58 @@ const ALWAYS_RELEVANT_PATH_SUBSTRINGS = ['/about', '/about/submissions']
  * (relevant page failed) or just an irrelevant miss elsewhere on the site.
  */
 export const EVIDENCE_CRITERIA = Object.freeze([
-  // --- Dimension 1: Editorial Governance & Peer Review (AJR-E-1.1-SPEC.md § 3) ---
-  { id: 'aims_scope', dimension: 'editorial_governance', weight: 2,
+  // --- Dimension 1: Editorial Governance & Peer Review (AJR-E-1.1-SPEC.md § 3, EDITORIAL_GOVERNANCE_ITEMS) ---
+  { id: 'aims_scope_explicit', dimension: 'editorial_governance', weight: 2,
     patterns: ['aim and scope', 'aims and scope', 'about the journal', 'journal focus', 'focus and scope', '宗旨', '办刊宗旨', '期刊简介', '关于本刊'],
     relevantPathKeywords: ['aims-and-scope', 'aim-and-scope'] },
-  { id: 'editorial_board', dimension: 'editorial_governance', weight: 3,
+  { id: 'editorial_board_public', dimension: 'editorial_governance', weight: 3,
     patterns: ['editorial board', 'editorial team', 'board of editors', 'editorial masthead', '编辑委员会', '编委会'],
     relevantPathKeywords: ['editorial-board', 'editorialteam', 'editorialmasthead'] },
-  { id: 'editor_identity', dimension: 'editorial_governance', weight: 2,
-    patterns: ['editor-in-chief', 'editor in chief', 'chief editor', 'associate editor', 'affiliation', '主编', '副主编', '编辑'],
+  // Tightened (review-caught false positive): a bare "affiliation" match
+  // fires on ordinary article-author affiliation text anywhere on the
+  // site, which has nothing to do with whether editors themselves are
+  // named/identifiable. Now requires an editor-role term to co-occur.
+  { id: 'editor_identity_affiliation_verifiable', dimension: 'editorial_governance', weight: 2,
+    patterns: ['editor-in-chief', 'editor in chief', 'chief editor', 'associate editor', 'editorial board member', '主编', '副主编', '编委'],
     relevantPathKeywords: ['editorial-board', 'editorialteam', 'editorialmasthead'] },
-  { id: 'peer_review_disclosed', dimension: 'editorial_governance', weight: 4,
+  { id: 'peer_review_process_disclosed', dimension: 'editorial_governance', weight: 4,
     patterns: ['peer review', 'peer-review', 'peer reviewed', 'double-blind', 'single-blind', 'double blind review', '同行评审', '同行评议', '双盲评审', '盲审'],
     relevantPathKeywords: ['peer-review', 'editorial-policies'] },
-  { id: 'reviewer_guidelines', dimension: 'editorial_governance', weight: 2,
+  { id: 'reviewer_editorial_guidelines', dimension: 'editorial_governance', weight: 2,
     patterns: ['reviewer guideline', 'review guideline', 'guide for reviewer', 'reviewer instructions', '审稿指南', '审稿人指南', '评审指南'],
     relevantPathKeywords: ['peer-review', 'editorial-policies', 'for-authors'] },
   { id: 'complaints_appeals', dimension: 'editorial_governance', weight: 2,
     patterns: ['complaint', 'appeal', 'grievance', 'dispute resolution', '投诉', '申诉', '异议'],
     relevantPathKeywords: ['editorial-policies', 'publication-ethics', 'ethics'] },
 
-  // --- Dimension 2: Research Integrity (AJR-E-1.1-SPEC.md § 4) ---
-  { id: 'publication_ethics', dimension: 'research_integrity', weight: 3,
+  // --- Dimension 2: Research Integrity (AJR-E-1.1-SPEC.md § 4, RESEARCH_INTEGRITY_ITEMS) ---
+  { id: 'publication_ethics_policy', dimension: 'research_integrity', weight: 3,
     patterns: ['publication ethics', 'ethics statement', 'ethics and misconduct', 'misconduct policy', 'code of conduct', '出版伦理', '学术不端', '科研诚信'],
     relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
-  { id: 'corrections_retractions', dimension: 'research_integrity', weight: 3,
+  { id: 'corrections_retractions_policy', dimension: 'research_integrity', weight: 3,
     patterns: ['retraction', 'correction policy', 'errata', 'erratum', 'corrigendum', '勘误', '撤稿', '更正声明'],
     relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies', 'corrections', 'retractions'] },
-  { id: 'authorship_policy', dimension: 'research_integrity', weight: 2,
+  { id: 'authorship_contributorship_policy', dimension: 'research_integrity', weight: 2,
     patterns: ['authorship criteria', 'authorship policy', 'contributorship', 'author contribution', 'credit taxonomy', '作者身份', '署名规范', '作者贡献'],
     relevantPathKeywords: ['publication-ethics', 'ethics', 'author-guidelines', 'for-authors'] },
-  { id: 'coi_policy', dimension: 'research_integrity', weight: 2,
+  { id: 'conflict_of_interest_policy', dimension: 'research_integrity', weight: 2,
     patterns: ['conflict of interest', 'competing interest', 'coi disclosure', '利益冲突', '利益相关'],
     relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
-  { id: 'plagiarism_policy', dimension: 'research_integrity', weight: 2,
+  { id: 'plagiarism_similarity_policy', dimension: 'research_integrity', weight: 2,
     patterns: ['plagiarism', 'similarity check', 'turnitin', 'ithenticate', 'similarity index', '抄袭', '查重', '相似度检测', '剽窃'],
     relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
-  { id: 'human_animal_ethics', dimension: 'research_integrity', weight: 1,
+  { id: 'human_animal_ethics_consent', dimension: 'research_integrity', weight: 1,
     patterns: ['informed consent', 'animal welfare', 'institutional review board', 'ethics committee approval', 'human subjects', '知情同意', '伦理委员会', '动物福利'],
     relevantPathKeywords: ['publication-ethics', 'ethics'] },
-  { id: 'data_availability', dimension: 'research_integrity', weight: 1,
+  { id: 'data_availability_sharing', dimension: 'research_integrity', weight: 1,
     patterns: ['data availability', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'],
     relevantPathKeywords: ['data-policy', 'author-guidelines', 'for-authors'] },
   { id: 'ai_use_policy', dimension: 'research_integrity', weight: 1,
     patterns: ['use of ai', 'artificial intelligence policy', 'generative ai', 'chatgpt', 'large language model', 'ai-assisted', '人工智能政策', '生成式人工智能', '大语言模型'],
     relevantPathKeywords: ['ai-policy', 'author-guidelines', 'for-authors', 'publication-ethics'] },
 
-  // --- Dimension 7: Transparency & Access Policy (AJR-E-1.1-SPEC.md § 9) ---
-  { id: 'apc_disclosure', dimension: 'transparency', weight: 2,
+  // --- Dimension 7: Transparency & Access Policy (AJR-E-1.1-SPEC.md § 9, TRANSPARENCY_ITEMS) ---
+  { id: 'fee_disclosure', dimension: 'transparency', weight: 2,
     patterns: ['article processing charge', 'apc', 'publication fee', 'processing fee', 'no fee', 'fee waiver', '版面费', '发表费', '审稿费', '费用减免'],
     relevantPathKeywords: ['apc', 'fees', 'for-authors', 'submissions'] },
   { id: 'copyright_licensing', dimension: 'transparency', weight: 2,
@@ -123,14 +140,29 @@ export const EVIDENCE_CRITERIA = Object.freeze([
   { id: 'access_model_disclosure', dimension: 'transparency', weight: 1,
     patterns: ['open access', 'subscription', 'hybrid journal', 'access model', '开放获取', '开放存取', '订阅'],
     relevantPathKeywords: ['copyright', 'licensing', 'apc'] },
-  { id: 'publisher_contact', dimension: 'transparency', weight: 2,
-    patterns: ['publisher', 'contact us', 'contact information', 'mailing address', '出版商', '联系我们', '联系方式'],
+  // Tightened (review-caught false positive): a bare "publisher" match
+  // fires on any "Published by X" byline, which discloses WHO the
+  // publisher is but not how to actually contact them. Now requires an
+  // actual contact-channel term to co-occur.
+  { id: 'publisher_ownership_contact', dimension: 'transparency', weight: 2,
+    patterns: ['contact us', 'contact information', 'mailing address', 'contact email', 'editorial office address', '联系我们', '联系方式', '联系地址'],
     relevantPathKeywords: [] },
   { id: 'author_guidelines', dimension: 'transparency', weight: 1,
     patterns: ['author guideline', 'guide for authors', 'submission guideline', 'manuscript preparation', '投稿指南', '作者指南', '稿约'],
     relevantPathKeywords: ['author-guidelines', 'for-authors', 'submissions'] },
-  { id: 'advertising_disclosure', dimension: 'transparency', weight: 1,
+  { id: 'advertising_sponsorship_disclosure', dimension: 'transparency', weight: 1,
     patterns: ['advertising policy', 'sponsorship', 'advertisement disclosure', '广告政策', '赞助声明'],
+    relevantPathKeywords: [] },
+  // Not crawl-detectable in a generic way -- "other applicable terms" is a
+  // deliberate catch-all for whatever a specific journal states beyond the
+  // six named items above, which has no fixed keyword vocabulary to search
+  // for. Per platform-owner decision: default `not_applicable` (removed
+  // from the coverage denominator entirely, never penalized as absent);
+  // a human curator can override to met/not_met on a case-by-case basis if
+  // a journal states something concretely in this catch-all. See
+  // resolveCriterion()'s special case for this id.
+  { id: 'other_applicable_terms', dimension: 'transparency', weight: 1,
+    patterns: [],
     relevantPathKeywords: [] },
 ])
 
@@ -183,6 +215,14 @@ function detectCriterionInPages(criterion, fetchedPages) {
  * @returns {{ id: string, weight: number, status: string, source_url: string|null, retrieved_at: string|null }}
  */
 export function resolveCriterion(criterion, fetchedPages, websiteUrl = null) {
+  // other_applicable_terms has no fixed keyword vocabulary to search for
+  // (see its EVIDENCE_CRITERIA entry) -- always not_applicable by default,
+  // removed from the coverage denominator rather than guessed at or
+  // penalized as an unresolved absence.
+  if (criterion.id === 'other_applicable_terms') {
+    return { id: criterion.id, weight: criterion.weight, status: 'not_applicable', source_url: null, retrieved_at: null }
+  }
+
   const { matched, sourceUrl } = detectCriterionInPages(criterion, fetchedPages)
   if (matched) {
     return { id: criterion.id, weight: criterion.weight, status: 'met', source_url: sourceUrl, retrieved_at: fetchedPages.find(p => p.url === sourceUrl)?.retrieved_at ?? null }

@@ -82,12 +82,25 @@ export function classifyFetchException(err) {
 
 /**
  * Minimal robots.txt parser -- only checks a flat `Disallow: /` (or a
- * Disallow prefix matching the target path) under a User-agent block that
+ * Disallow prefix matching the target path) under a User-agent group that
  * applies to this UA or `*`. Deliberately does not implement the full
  * robots.txt grammar (Allow overrides, wildcards, crawl-delay) -- a
  * conservative under-implementation that only ever blocks on an
  * unambiguous, explicit disallow is safer than a permissive one that might
  * silently ignore a real disallow rule it failed to parse.
+ *
+ * Groups multiple consecutive `User-agent:` lines correctly -- review-
+ * caught bug in an earlier version: it reset "does this apply to us" on
+ * every single User-agent line, so a real robots.txt shape like
+ *   User-agent: POSI-EvidenceETL
+ *   User-agent: Googlebot
+ *   Disallow: /private
+ * (both UAs sharing one ruleset, standard robots.txt grouping) lost our
+ * own UA's applicability the moment the SECOND User-agent line was
+ * parsed, before the Disallow line it was meant to apply to was even
+ * reached. Per the standard, a run of consecutive User-agent lines forms
+ * one group; the group's rules apply to the FIRST group whose agent list
+ * contains our own UA token, falling back to a `*` group.
  * @param {string} robotsTxt
  * @param {string} path - e.g. '/about'
  * @param {string} userAgentToken - the UA string's product token, e.g. 'POSI-EvidenceETL'
@@ -95,35 +108,44 @@ export function classifyFetchException(err) {
  */
 export function isPathDisallowedByRobots(robotsTxt, path, userAgentToken) {
   if (!robotsTxt) return false
-  const lines = robotsTxt.split('\n').map(l => l.trim())
-  let currentAppliesToUs = false
-  let sawSpecificBlock = false
-  const disallowsForUs = []
-  const disallowsForStar = []
-  let inStarBlock = false
+  const lines = robotsTxt.split('\n').map(l => l.split('#')[0].trim()).filter(Boolean)
+  const uaLower = userAgentToken.toLowerCase()
 
-  for (const raw of lines) {
-    const line = raw.split('#')[0].trim()
-    if (!line) continue
-    const [rawKey, ...rest] = line.split(':')
-    const key = rawKey.trim().toLowerCase()
-    const value = rest.join(':').trim()
+  const groups = []
+  let current = null
+  for (const line of lines) {
+    const sep = line.indexOf(':')
+    if (sep === -1) continue
+    const key = line.slice(0, sep).trim().toLowerCase()
+    const value = line.slice(sep + 1).trim()
     if (key === 'user-agent') {
-      const ua = value.toLowerCase()
-      inStarBlock = ua === '*'
-      currentAppliesToUs = ua === '*' || userAgentToken.toLowerCase().includes(ua)
-      if (userAgentToken.toLowerCase().includes(ua) && ua !== '*') sawSpecificBlock = true
-      continue
-    }
-    if (key === 'disallow' && value) {
-      if (currentAppliesToUs && !inStarBlock) disallowsForUs.push(value)
-      if (inStarBlock) disallowsForStar.push(value)
+      // A new group starts only when the previous line wasn't itself a
+      // User-agent line (i.e. we're not mid-group) -- consecutive
+      // User-agent lines accumulate into the SAME group.
+      if (!current || current.sawDirective) {
+        current = { agents: [], disallows: [], sawDirective: false }
+        groups.push(current)
+      }
+      current.agents.push(value.toLowerCase())
+    } else if (current) {
+      current.sawDirective = true
+      if (key === 'disallow' && value) current.disallows.push(value)
     }
   }
 
-  const effective = sawSpecificBlock ? disallowsForUs : disallowsForStar
-  return effective.some(prefix => path.startsWith(prefix))
+  const specificGroup = groups.find(g => g.agents.some(a => a !== '*' && uaLower.includes(a)))
+  const starGroup = groups.find(g => g.agents.includes('*'))
+  const effective = specificGroup ?? starGroup
+  if (!effective) return false
+  return effective.disallows.some(prefix => path.startsWith(prefix))
 }
+
+/** Response bodies larger than this are treated as unusable rather than
+ * buffered in full -- guards a 1000-journal batch run against one
+ * misbehaving server (or a non-HTML binary served with a text-ish
+ * Content-Type) consuming unbounded memory across concurrent fetches.
+ * 5MB comfortably exceeds any real policy page's HTML size. */
+export const MAX_BODY_BYTES = 5 * 1024 * 1024
 
 /**
  * @param {string} url
@@ -138,6 +160,7 @@ export function isPathDisallowedByRobots(robotsTxt, path, userAgentToken) {
 export async function fetchWithStatus(url, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 10000
   const userAgent = opts.userAgent ?? 'POSI-EvidenceETL/1.0 (+https://posi.panorama-sg.com; posi@panorama-sg.com)'
+  const maxBodyBytes = opts.maxBodyBytes ?? MAX_BODY_BYTES
   const retrieved_at = new Date().toISOString()
 
   try {
@@ -150,8 +173,18 @@ export async function fetchWithStatus(url, opts = {}) {
     if (fetch_status !== 'ok') {
       return { url, fetch_status, http_status: res.status, body: null, retrieved_at, error: null }
     }
+
+    const declaredLength = Number(res.headers.get('content-length'))
+    if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
+      return { url, fetch_status: 'parse_error', http_status: res.status, body: null, retrieved_at, error: `response body exceeds ${maxBodyBytes} bytes (Content-Length: ${declaredLength})` }
+    }
+
     try {
-      const body = await res.text()
+      // Read via a streamed byte-counter, not res.text() directly -- a
+      // server that lies about (or omits) Content-Length could otherwise
+      // still cause an unbounded read; this enforces the cap regardless of
+      // what the server claims.
+      const body = await readBodyWithCap(res, maxBodyBytes)
       return { url, fetch_status: 'ok', http_status: res.status, body, retrieved_at, error: null }
     } catch (parseErr) {
       return { url, fetch_status: 'parse_error', http_status: res.status, body: null, retrieved_at, error: String(parseErr?.message ?? parseErr) }
@@ -160,4 +193,27 @@ export async function fetchWithStatus(url, opts = {}) {
     const fetch_status = classifyFetchException(err)
     return { url, fetch_status, http_status: null, body: null, retrieved_at, error: String(err?.message ?? err) }
   }
+}
+
+/**
+ * @param {Response} res
+ * @param {number} maxBytes
+ * @returns {Promise<string>}
+ */
+async function readBodyWithCap(res, maxBytes) {
+  if (!res.body) return res.text()
+  const reader = res.body.getReader()
+  const chunks = []
+  let received = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    received += value.byteLength
+    if (received > maxBytes) {
+      await reader.cancel()
+      throw new Error(`response body exceeded ${maxBytes} bytes while streaming`)
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks.map(c => Buffer.from(c))).toString('utf-8')
 }

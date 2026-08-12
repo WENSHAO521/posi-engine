@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyHttpStatus, classifyFetchException, isPathDisallowedByRobots, BLOCKING_STATUSES, UNKNOWN_STATUSES, CLEAN_ABSENCE_STATUSES } from '../src/evidence-fetch.mjs'
+import { classifyHttpStatus, classifyFetchException, isPathDisallowedByRobots, BLOCKING_STATUSES, UNKNOWN_STATUSES, CLEAN_ABSENCE_STATUSES, MAX_BODY_BYTES } from '../src/evidence-fetch.mjs'
 
 test('classifyHttpStatus: 2xx is ok, 403/404/429 are their own distinct statuses', () => {
   assert.equal(classifyHttpStatus(200), 'ok')
@@ -73,4 +73,25 @@ test('isPathDisallowedByRobots: a UA-specific block overrides the wildcard block
   // Our specific UA has an explicit empty Disallow (= allowed everything),
   // which must take priority over the blanket "*" disallow.
   assert.equal(isPathDisallowedByRobots(robots, '/about', 'POSI-EvidenceETL/1.0'), false)
+})
+
+test('REVIEW-CAUGHT BUG, FIXED: two consecutive User-agent lines sharing one Disallow ruleset both apply, not just the first', () => {
+  const robots = 'User-agent: POSI-EvidenceETL\nUser-agent: Googlebot\nDisallow: /private'
+  // Prior version reset "does this apply to us" on the SECOND User-agent
+  // line before the shared Disallow was reached, losing our own UA's
+  // applicability to a rule that, per standard robots.txt grouping
+  // semantics, plainly does apply to it.
+  assert.equal(isPathDisallowedByRobots(robots, '/private/x', 'POSI-EvidenceETL/1.0'), true)
+  assert.equal(isPathDisallowedByRobots(robots, '/about', 'POSI-EvidenceETL/1.0'), false)
+})
+
+test('isPathDisallowedByRobots: a group\'s Disallow only applies to that group, not a later unrelated group', () => {
+  const robots = 'User-agent: Googlebot\nDisallow: /google-only\n\nUser-agent: *\nDisallow: /everyone'
+  assert.equal(isPathDisallowedByRobots(robots, '/google-only', 'POSI-EvidenceETL/1.0'), false, 'this group is for Googlebot specifically, not us, and we fall through to the * group')
+  assert.equal(isPathDisallowedByRobots(robots, '/everyone', 'POSI-EvidenceETL/1.0'), true)
+})
+
+test('MAX_BODY_BYTES is a sane positive number, exported for fetchWithStatus callers to reference', () => {
+  assert.equal(typeof MAX_BODY_BYTES, 'number')
+  assert.ok(MAX_BODY_BYTES > 0)
 })
