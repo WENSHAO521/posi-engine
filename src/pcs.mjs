@@ -26,16 +26,24 @@ export const PCS_METHODOLOGY_VERSION = 'PCS-1.0'
  *   (PCS-1.0-SPEC.md § 7). A work that could not be fetched at all must
  *   not appear in this array in the first place; see calculatePcsCoverage()
  *   for tracking that separately.
- * @returns {{ pcs: number | null, eligible_items: number, citation_count: number }}
+ * @returns {{ pcs: number | null, eligible_items: number, citation_count: number, items_with_citation_data: number }}
+ *   `items_with_citation_data` is distinct from `eligible_items`: it counts
+ *   only works where Crossref actually returned an is_referenced_by_count
+ *   field (including an explicit `0`), separate from works that were
+ *   fetched but had the field entirely absent and were defaulted to 0 —
+ *   so a reader can tell "111 of 120 eligible items had real Crossref
+ *   citation data" apart from "120 eligible items, PCS computed."
  */
 export function calculatePcs(works) {
   const citable = works.filter(isCitable)
   const eligible_items = citable.length
   const citation_count = citable.reduce((sum, w) => sum + (w.is_referenced_by_count ?? 0), 0)
+  const items_with_citation_data = citable.filter(w => w.is_referenced_by_count != null).length
   return {
     pcs: eligible_items > 0 ? citation_count / eligible_items : null,
     eligible_items,
     citation_count,
+    items_with_citation_data,
   }
 }
 

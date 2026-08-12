@@ -12,6 +12,7 @@ test('calculatePcs matches PCS-1.0-SPEC.md § 6\'s formula: sum(is_referenced_by
   assert.equal(result.eligible_items, 3)
   assert.equal(result.citation_count, 60)
   assert.equal(result.pcs, 20)
+  assert.equal(result.items_with_citation_data, 3)
 })
 
 test('a work with no is_referenced_by_count (or 0) is a real data point, not missing data (PCS-1.0-SPEC.md § 7)', () => {
@@ -27,6 +28,7 @@ test('a work with no is_referenced_by_count (or 0) is a real data point, not mis
   assert.equal(result.eligible_items, 3, 'both the undefined-count and 0-count works are included in the denominator')
   assert.equal(result.citation_count, 10)
   assert.equal(Math.round(result.pcs * 1000) / 1000, Math.round((10 / 3) * 1000) / 1000)
+  assert.equal(result.items_with_citation_data, 2, 'only the two works with an actual is_referenced_by_count field count here -- the field-absent work does not')
 })
 
 test('calculatePcs reuses pci.mjs\'s isCitable() -- non-citable document types are excluded, same eligibility rule as PCI', () => {
