@@ -118,6 +118,18 @@ test('computeContinuityScore and computeOutputAdequacyScore are proportional, ca
   assert.equal(computeOutputAdequacyScore(5, 40).score, 0.75, '5 articles vs expected 20 -> 25% of the 3-point weight')
 })
 
+test('computeOutputAdequacyScore floors "expected" at 10, not 1 -- a young journal cannot max out on fewer articles than the § 7 minimum sample size', () => {
+  // Regression test: at 12 months, months/2 = 6 < the platform's own
+  // 10-article minimum sample size (AJR-E-1.1-SPEC.md § 7). A max(1, ...)
+  // floor let 6 articles score full marks; max(10, ...) requires 10.
+  assert.equal(computeOutputAdequacyScore(6, 12).expected, 10, 'expected floors at 10 even though months/2 = 6')
+  assert.equal(computeOutputAdequacyScore(6, 12).score, 1.8, '6 articles vs a floored expected of 10 -> 60% of the 3-point weight, not full marks')
+  assert.equal(computeOutputAdequacyScore(10, 12).score, 3, '10 articles meets the floored expected of 10 -> full marks')
+
+  // Above the floor, behavior is unchanged: months/2 already exceeds 10.
+  assert.equal(computeOutputAdequacyScore(20, 40).expected, 20, 'expected is still months/2 once that exceeds the floor')
+})
+
 test('scorePublishingStability composes all five sub-scores and caps at 15', () => {
   const result = scorePublishingStability(
     { frequency_disclosed: 'met', deposit_timeliness: 'met' },

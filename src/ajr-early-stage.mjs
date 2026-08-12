@@ -198,7 +198,12 @@ export function computeContinuityScore(totalWindows, activeWindows) {
  */
 export function computeOutputAdequacyScore(articleCount, monthsSinceLaunch) {
   if (monthsSinceLaunch == null || monthsSinceLaunch <= 0) return { score: null, expected: null }
-  const expected = Math.max(1, monthsSinceLaunch / 2)
+  // Floor is 10, not 1: § 7's article-sample dimension already requires a
+  // minimum of 10 articles, so a floor below that let a young journal hit
+  // full Output Adequacy marks on fewer articles than the rubric's own
+  // minimum sample size (e.g. a 12-month-old journal reaching `expected=6`
+  // under a max(1,...) floor). See AJR-E-1.1-SPEC.md § 6 and CHANGELOG.md.
+  const expected = Math.max(10, monthsSinceLaunch / 2)
   const ratio = clamp(articleCount / expected, 1)
   return { score: round2(OUTPUT_ADEQUACY_WEIGHT * ratio), expected }
 }
