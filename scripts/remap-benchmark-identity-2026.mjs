@@ -23,13 +23,22 @@
  *   node scripts/remap-benchmark-identity-2026.mjs \
  *     --registry <path to registry/journal-id-map.csv> \
  *     --benchmark <path to corpus/global-benchmark.json> \
- *     --out <output dir>
+ *     --out <output dir> \
+ *     [--superseded <path to registry/superseded-ids.csv>]
+ *
+ * --superseded is optional but should always be passed once that file
+ * exists: without it, an identity value that used to belong to a now-
+ * retired record (e.g. an old ISSN) still resolves to the OLD, superseded
+ * posi_id, silently reviving a retired identity instead of following
+ * through to the surviving one.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
 import { normalizeRecord } from '../src/migration/normalize.mjs'
 import { buildCandidateEntities } from '../src/migration/dedupe.mjs'
+import { validateSupersessionRows, buildSupersessionMap, buildForwardedValueIndex } from '../src/migration/supersession.mjs'
+import { parseCsv } from '../src/showjcr/csv.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -49,28 +58,40 @@ function parseRegistryCsv(text) {
   return rows
 }
 
-/** value -> [{ posi_id, identity_type }] — an array because a genuinely
- * malformed registry could (in principle) have the same literal value
- * recorded under two different posi_ids; that's a conflict to surface,
- * not silently pick one. */
-function buildValueIndex(registryRows) {
-  const idx = new Map()
-  for (const row of registryRows) {
-    if (!idx.has(row.identity_value)) idx.set(row.identity_value, [])
-    idx.get(row.identity_value).push({ posi_id: row.posi_id, identity_type: row.identity_type })
-  }
-  return idx
+/** The `reason` column contains free text with commas -- must use the
+ * real RFC4180 parser, not a naive split, to keep old_posi_id/
+ * superseded_by_posi_id from ever accidentally reading a fragment of a
+ * later column. */
+function parseSupersededCsv(text) {
+  const { rows } = parseCsv(text)
+  return rows.map(r => ({ old_posi_id: r.old_posi_id, superseded_by_posi_id: r.superseded_by_posi_id }))
 }
 
 function main() {
   const registryPath = resolve(arg('registry'))
   const benchmarkPath = resolve(arg('benchmark'))
   const outDir = resolve(arg('out', 'benchmark-remap-output'))
+  const supersededPath = arg('superseded')
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true })
 
   const registryRows = parseRegistryCsv(readFileSync(registryPath, 'utf-8'))
   console.log(`Loaded ${registryRows.length} registry rows.`)
-  const valueIndex = buildValueIndex(registryRows)
+
+  let supersessionMap = new Map()
+  if (supersededPath && existsSync(resolve(supersededPath))) {
+    const supersessionRows = parseSupersededCsv(readFileSync(resolve(supersededPath), 'utf-8'))
+    const knownPosiIds = new Set(registryRows.map(r => r.posi_id))
+    const { valid, errors } = validateSupersessionRows(supersessionRows, { knownPosiIds })
+    if (!valid) {
+      console.error('registry/superseded-ids.csv failed validation:')
+      errors.forEach(e => console.error(`  - ${e}`))
+      process.exit(1)
+    }
+    supersessionMap = buildSupersessionMap(supersessionRows)
+    console.log(`Loaded ${supersessionRows.length} supersession row(s) -- validated, no cycles/chains/duplicates.`)
+  }
+
+  const valueIndex = buildForwardedValueIndex(registryRows, supersessionMap)
 
   const benchmark = JSON.parse(readFileSync(benchmarkPath, 'utf-8'))
   console.log(`Loaded ${benchmark.length} benchmark records.`)

@@ -27,13 +27,21 @@
  *     --benchmark <path to corpus/global-benchmark.json> \
  *     --resolved <path to resolved.json> \
  *     --unresolved <path to unresolved-manual-review.json> \
- *     --out <output dir>
+ *     --out <output dir> \
+ *     [--superseded <path to registry/superseded-ids.csv>]
+ *
+ * --superseded matters here too: without it, an "unresolved" entity whose
+ * identity value happens to match a RETIRED registry row would get
+ * "reused" onto the old, superseded posi_id instead of either the
+ * surviving id or a fresh mint.
  */
 
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
 import { buildRegistryIndex, nextSequenceNumber } from '../src/migration/mint.mjs'
 import { resolveOrMintIds } from '../src/migration/mint.mjs'
+import { validateSupersessionRows, buildSupersessionMap, resolveSupersededId } from '../src/migration/supersession.mjs'
+import { parseCsv } from '../src/showjcr/csv.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -53,12 +61,20 @@ function parseRegistryCsv(text) {
   return rows
 }
 
+/** The `reason` column contains free text with commas -- must use the
+ * real RFC4180 parser, not a naive split. */
+function parseSupersededCsv(text) {
+  const { rows } = parseCsv(text)
+  return rows.map(r => ({ old_posi_id: r.old_posi_id, superseded_by_posi_id: r.superseded_by_posi_id }))
+}
+
 function main() {
   const registryPath = resolve(arg('registry'))
   const benchmarkPath = resolve(arg('benchmark'))
   const resolvedPath = resolve(arg('resolved'))
   const unresolvedPath = resolve(arg('unresolved'))
   const outDir = resolve(arg('out', 'mint-output'))
+  const supersededPath = arg('superseded')
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true })
 
   const registryRows = parseRegistryCsv(readFileSync(registryPath, 'utf-8'))
@@ -68,15 +84,36 @@ function main() {
 
   console.log(`Registry: ${registryRows.length} rows. Already-resolved (by remap): ${resolved.length}. To re-resolve/mint: ${unresolved.length}.`)
 
+  let supersessionMap = new Map()
+  if (supersededPath && existsSync(resolve(supersededPath))) {
+    const supersessionRows = parseSupersededCsv(readFileSync(resolve(supersededPath), 'utf-8'))
+    const knownPosiIds = new Set(registryRows.map(r => r.posi_id))
+    const { valid, errors } = validateSupersessionRows(supersessionRows, { knownPosiIds })
+    if (!valid) {
+      console.error('registry/superseded-ids.csv failed validation:')
+      errors.forEach(e => console.error(`  - ${e}`))
+      process.exit(1)
+    }
+    supersessionMap = buildSupersessionMap(supersessionRows)
+    console.log(`Loaded ${supersessionRows.length} supersession row(s) -- validated.`)
+  }
+
   const legacyIdToPosiId = new Map()
   for (const r of resolved) {
-    for (const legacyId of r.member_legacy_ids) legacyIdToPosiId.set(legacyId, r.posi_id)
+    const posiId = supersessionMap.size > 0 ? resolveSupersededId(r.posi_id, supersessionMap) : r.posi_id
+    for (const legacyId of r.member_legacy_ids) legacyIdToPosiId.set(legacyId, posiId)
   }
 
   // Re-resolve every "unresolved" entity against a freshly-built registry
   // index -- reuses instead of double-minting if the registry has moved on
-  // since unresolved-manual-review.json was generated.
-  const registryIndex = buildRegistryIndex(registryRows)
+  // since unresolved-manual-review.json was generated. Superseded ids are
+  // forwarded to their surviving id so an unresolved entity that happens
+  // to match a retired identity value reuses the CURRENT record, not the
+  // retired one.
+  const rawRegistryIndex = buildRegistryIndex(registryRows)
+  const registryIndex = supersessionMap.size > 0
+    ? new Map([...rawRegistryIndex].map(([key, posiId]) => [key, resolveSupersededId(posiId, supersessionMap)]))
+    : rawRegistryIndex
   const startSequence = nextSequenceNumber(registryRows)
   const today = new Date().toISOString().slice(0, 10)
 

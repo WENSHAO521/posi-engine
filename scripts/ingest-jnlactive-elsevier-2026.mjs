@@ -20,13 +20,20 @@
  *     --csv <path to jnlactive.csv> \
  *     --benchmark <path to corpus/global-benchmark.json> \
  *     --out <output dir> \
- *     [--concurrency 6] [--limit N]
+ *     [--concurrency 6] [--limit N] \
+ *     [--excluded <path to registry/excluded-identities.csv>]
+ *
+ * --excluded skips rows matching a known-bad identity value (e.g. a
+ * "ghost" ISSN with no real external evidence, caught and documented in a
+ * prior run -- see registry/excluded-identities.csv) so it doesn't
+ * resurface as a fresh "unresolved, needs manual review" candidate every
+ * time the source CSV still contains it.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
 import { parseCsv } from '../src/showjcr/csv.mjs'
-import { buildExistingIssnSet, validateConcurrency, partitionOpenAlexLookups } from '../src/migration/bulk-ingest-helpers.mjs'
+import { buildExistingIssnSet, validateConcurrency, partitionOpenAlexLookups, buildExcludedIdentitySet } from '../src/migration/bulk-ingest-helpers.mjs'
 
 const OPENALEX_BASE = 'https://api.openalex.org'
 const SELECT_FIELDS = ['id', 'issn_l', 'issn', 'display_name', 'type', 'host_organization_name', 'homepage_url', 'is_oa', 'is_in_doaj', 'works_count', 'country_code']
@@ -138,16 +145,37 @@ function buildRecord(csvRow, openAlex, seq) {
   }
 }
 
+/** The `reason` column contains free text with commas -- must use the
+ * real RFC4180 parser, not a naive split. */
+function parseExcludedIdentitiesCsv(text) {
+  const { rows } = parseCsv(text)
+  return rows.map(r => ({ identity_type: r.identity_type, identity_value: r.identity_value }))
+}
+
 async function main() {
   const csvPath = resolve(arg('csv'))
   const benchmarkPath = resolve(arg('benchmark'))
   const outDir = resolve(arg('out', 'jnlactive-ingest-output'))
   const concurrency = validateConcurrency(arg('concurrency', '6'))
   const limit = arg('limit') ? parseInt(arg('limit'), 10) : null
+  const excludedPath = arg('excluded')
 
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true })
 
-  const csvRows = parseJnlactiveCsv(readFileSync(csvPath, 'utf-8'))
+  let excludedIssns = new Set()
+  if (excludedPath && existsSync(resolve(excludedPath))) {
+    excludedIssns = buildExcludedIdentitySet(parseExcludedIdentitiesCsv(readFileSync(resolve(excludedPath), 'utf-8')))
+    console.log(`Loaded ${excludedIssns.size} excluded identity value(s) from registry/excluded-identities.csv.`)
+  }
+
+  const allCsvRows = parseJnlactiveCsv(readFileSync(csvPath, 'utf-8'))
+  const excludedRows = allCsvRows.filter(r => excludedIssns.has(r.issn))
+  const csvRows = allCsvRows.filter(r => !excludedIssns.has(r.issn))
+  if (excludedRows.length > 0) {
+    console.log(`Skipped ${excludedRows.length} row(s) matching a known-excluded identity (see registry/excluded-identities.csv):`)
+    excludedRows.forEach(r => console.log(`  - ${r.title}: ${r.issn}`))
+  }
+
   const benchmark = JSON.parse(readFileSync(benchmarkPath, 'utf-8'))
   const existingIssns = buildExistingIssnSet(benchmark)
 

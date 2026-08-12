@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildExistingIssnSet, validateConcurrency, partitionOpenAlexLookups } from '../src/migration/bulk-ingest-helpers.mjs'
+import { buildExistingIssnSet, validateConcurrency, partitionOpenAlexLookups, buildExcludedIdentitySet } from '../src/migration/bulk-ingest-helpers.mjs'
 
 test('buildExistingIssnSet includes both issn_print and issn_online, not just one via ||', () => {
   const benchmark = [
@@ -57,4 +57,13 @@ test('partitionOpenAlexLookups handles a mixed batch correctly', () => {
   const { ingestable, transientErrors } = partitionOpenAlexLookups(lookups)
   assert.equal(ingestable.length, 2)
   assert.equal(transientErrors.length, 1)
+})
+
+test('buildExcludedIdentitySet collects identity_value from registry/excluded-identities.csv rows', () => {
+  const rows = [
+    { identity_type: 'issn_pair', identity_value: '2950-5771', reason: 'ghost_record_no_external_evidence' },
+  ]
+  const set = buildExcludedIdentitySet(rows)
+  assert.ok(set.has('2950-5771'))
+  assert.equal(set.size, 1)
 })

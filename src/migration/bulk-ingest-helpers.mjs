@@ -35,6 +35,14 @@ export function validateConcurrency(rawValue) {
 }
 
 /**
+ * @param {{ identity_type: string, identity_value: string, reason: string }[]} rows -- registry/excluded-identities.csv
+ * @returns {Set<string>} the set of excluded identity_value strings (ISSNs, etc.)
+ */
+export function buildExcludedIdentitySet(rows) {
+  return new Set(rows.map(r => r.identity_value))
+}
+
+/**
  * Splits OpenAlex lookup results into ones safe to persist as a new
  * benchmark record (a definitive answer: found, or genuinely not found)
  * versus transient failures (rate limited, server error, timeout, network
