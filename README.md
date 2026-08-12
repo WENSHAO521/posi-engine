@@ -1,13 +1,15 @@
 # posi-engine
 
 The calculation engine behind **POSI (Panorama Open Scholarly Index)**:
-PSC classification, PCI/PCI-5/PNCI citation-impact metrics, and category
-rankings (percentile, quartile). Reads from and writes back to
-[posi-data](https://github.com/WENSHAO521/posi-data), which is the canonical
-data store — this repo has no database of its own.
+PSC subject classification, lifecycle-based AJR-E/AJR-M journal ratings,
+PCI/PCI-5/PNCI citation-impact metrics, category rankings (E-Q/M-Q/Citation Q),
+Evidence Coverage crawling, and the identity/registry pipeline that resolves
+and mints every journal's permanent `POSI-J-######` id. Reads from and writes
+back to [posi-data](https://github.com/WENSHAO521/posi-data), which is the
+canonical data store — this repo has no database of its own.
 
 > **Status: implementing "POSI Journal Evaluation & Ranking Framework
-> 1.0"** (2026-08) — see [posi-data/CHANGELOG.md](https://github.com/WENSHAO521/posi-data/blob/pjr-seed-corpus-1000/CHANGELOG.md)
+> 1.0"** (2026-08) — see [posi-data/CHANGELOG.md](https://github.com/WENSHAO521/posi-data/blob/master/CHANGELOG.md)
 > for the full list of what changed and why. The original five pipeline
 > modules (`ranking.mjs`, `pci.mjs`, `psc-classify.mjs`,
 > `citation-integrity.mjs`, `release.mjs`) remain implemented and tested;
@@ -39,19 +41,39 @@ data store — this repo has no database of its own.
 > future evidence records will feed). See the PR description for the full
 > list of what's real vs. synthetic-only so far.
 >
-> **Known external blocker (2026-08):** the seed-corpus pipeline
-> completed identity resolution for all 1000 benchmark journals (real
-> `POSI-J-######` ids minted, see `posi-data`'s
-> `journals/discovered/global-benchmark-seed-2025.jsonl`), but PCI/PCI-5/
-> PNCI could not be computed — **OpenAlex's `/works` filtered-list
-> endpoint now requires paid credits**, confirmed via a direct request
-> returning `429 {"error":"Rate limit exceeded", "dailyRemainingUsd":0}`.
-> The free `/sources/{id}` singleton lookup this project's identity/PSC
-> enrichment relies on is unaffected. This is a real, structural change to
-> OpenAlex's API pricing that affects every future PJR release pipeline
-> run, not a bug in this project's code — see `posi-data`'s
-> `audits/migrations/benchmark-corpus-seed/README.md` for the full
-> writeup and reproduction steps once paid access is available.
+> **OpenAlex `/works` filtered-list endpoint (2026-08 update):** an
+> earlier pass hit `429 {"error":"Rate limit exceeded",
+> "dailyRemainingUsd":0}` on this endpoint, suggesting a move to paid-only
+> access. Re-verified 2026-08-12: a direct filtered `/works` request
+> (`primary_location.source.id:...,type:article,publication_year:...`)
+> now returns a clean `200`, unmetered. Whether the earlier failure was a
+> temporary budget exhaustion or a policy change since reverted isn't
+> confirmed either way — don't assume either direction without checking
+> again at the time you rely on it. The free `/sources/{id}` singleton
+> lookup this project's identity/PSC/citation enrichment relies on has
+> been unaffected throughout.
+>
+> **2026-08-12 — Elsevier + Frontiers Global Benchmark expansion, identity
+> infrastructure hardening, provisional Citation Q.** Global Benchmark grew
+> 1000 → 4,289 via two bulk publisher-catalog ingestions (`jnlactive.csv`,
+> Frontiers' title list — `scripts/ingest-jnlactive-elsevier-2026.mjs` /
+> `scripts/ingest-frontiers-2026.mjs`, sharing `src/migration/bulk-ingest-
+> helpers.mjs`). A second-round review found real identity-integrity gaps
+> in the first pass (hard-conflict pairs flagged but not actually gated
+> from independent minting; superseded records silently orphaning their
+> old permanent id) — fixed with `src/migration/supersession.mjs`
+> (validated invariants + real resolver follow-through: an old ISSN now
+> resolves straight to its surviving `POSI-J-######` id, not the retired
+> one) and `registry/excluded-identities.csv` for zero-evidence records.
+> `scripts/verify-benchmark-counts.mjs` gives every migration a
+> reconciliation check against a committed `expected-count.json` fixture.
+> `scripts/compute-benchmark-citation-q-2026.mjs` then computed a
+> *provisional* Citation Q (PSC classification + a conservative lifecycle
+> check + OpenAlex's own 2yr-mean-citedness, explicitly not a full
+> evidence-based AJR-M score) for the 3,296 newly-ingested journals. Full
+> writeups: `posi-data`'s `audits/migrations/elsevier-jnlactive-
+> expansion-2026/`, `frontiers-expansion-2026/`, and
+> `benchmark-citation-q-2026/`.
 
 ## What this is
 
@@ -101,6 +123,11 @@ posi-data (journals, works, citations)
 | `src/citation-integrity.mjs` | **Implemented + tested** (see status note above re: real citation-edge data) | PJR-SPEC.md § 9 — self-citation rate, citation stacking, concentration, publisher clustering, spike, cartel detection |
 | `src/release.mjs` | **Implemented + tested** | PJR-SPEC.md § 1–3 — manifest generation (`buildManifest`, `validateManifest`), asset filename/SHA256SUMS assembly. Does **not** call the GitHub Releases API — publishing stays a separate, human-triggered step. |
 | `src/openalex-document-type.mjs` | **Implemented + tested** | Maps OpenAlex work `type` -> PJR-SPEC.md § 5 `document_type`, documenting every type this project has observed and why (see module header) |
+| `src/showjcr/csv.mjs` | **Implemented + tested** | RFC4180-correct CSV parsing (quoted fields, embedded commas/newlines, doubled-quote escapes) — the shared parser every script that reads a source CSV must use, never a hand-rolled `split(',')` |
+| `src/migration/normalize.mjs` / `dedupe.mjs` / `identity.mjs` / `mint.mjs` | **Implemented + tested** | Identity resolution pipeline — normalize a raw source record, union-find dedupe via the "conflict beats match" rule (ISSN > OpenAlex Source ID > title/publisher, never auto-merged), resolve-or-mint against `registry/journal-id-map.csv` |
+| `src/migration/supersession.mjs` | **Implemented + tested** | `registry/superseded-ids.csv` invariant validation (no cycles/chains/duplicates, every target exists) + real resolver follow-through — an old, retired identity value resolves straight to its surviving `POSI-J-######` id |
+| `src/migration/bulk-ingest-helpers.mjs` | **Implemented + tested** | Shared helpers for publisher-catalog bulk-ingestion scripts — both-ISSN existing-record detection, positive-integer concurrency validation, transient-vs-permanent OpenAlex error partitioning, known-bad-identity exclusion |
+| `src/evidence-fetch.mjs` / `evidence-page-discovery.mjs` / `evidence-resolver.mjs` / `evidence-publisher-registry.mjs` / `evidence-coverage.mjs` | **Implemented + tested** (EC-1.0) | Evidence ETL v1 — site-crawl fetch with a 10-value status taxonomy, criterion-aware page discovery, publisher-wide policy inheritance, Evidence Coverage % / eligibility gate. Real crawl at Core Collection scale only (31 journals) — most major-publisher platforms block ~73% of requests, see `posi-data`'s `audits/evidence-etl/evidence-etl-v1-core30-2026/` |
 
 ## QA / diagnostic scripts
 
