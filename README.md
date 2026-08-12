@@ -51,6 +51,33 @@ posi-data (journals, works, citations)
 | `src/citation-integrity.mjs` | Stub | PJR-SPEC.md § 9 — self-citation rate, citation stacking, clustering, spike detection |
 | `src/release.mjs` | Stub | PJR-SPEC.md § 1–3 — manifest generation, asset packaging, GitHub Release |
 
+## QA / diagnostic scripts
+
+`scripts/cross-check-showjcr-identity.mjs` cross-checks POSI's own
+OpenAlex-derived journal identity data against
+[hitfyd/ShowJCR](https://github.com/hitfyd/ShowJCR), a Chinese academic
+tool that bundles several journal/conference reference CSVs (JCR, the CAS
+Journal Partition Table 中科院分区表, a CCF recommended-journal directory,
+and an international early-warning list). It flags journals where POSI's
+stored title or ISSN disagrees with ShowJCR's, and notes journals in
+ShowJCR's lists that aren't in POSI's corpus yet — a report for a human to
+review, never an auto-correction.
+
+**Only plain bibliographic identity — journal name, ISSN, EISSN — is ever
+pulled from the JCR / CAS-partition / rising-star families.** JCR impact
+factors and quartiles are Clarivate's own paid analysis product; CAS
+partition tiers are a licensed CAS product. POSI does not import, store,
+or display those values anywhere, regardless of what ShowJCR's own
+GPL-3.0 license covers for its code — see the script's header comment and
+`src/showjcr/extract.mjs` for the full reasoning and the exact
+column allow-list per source file. (CCF's own recommendation tier and the
+early-warning list's reason field are kept in full — that's each list's
+own open IP, not Clarivate's or CAS's.) No ShowJCR CSV is ever committed
+into this repo; everything is fetched fresh at request time.
+
+Run it with `node scripts/cross-check-showjcr-identity.mjs --out <dir>` —
+see the script header for the full usage and CLI flags.
+
 ## Running the tests
 
 ```bash
