@@ -82,6 +82,27 @@ test('no fetch attempts at all (e.g. no website_url on record) -> unknown', () =
   assert.equal(resolveCriterion(publicationEthics, [], null).status, 'unknown')
 })
 
+test('a failure on /about/editorialMasthead specifically only affects editorial_board/editor_identity, not unrelated criteria (real Core-31 run finding)', () => {
+  // Real finding from a re-run: three journals on the same OJS platform
+  // all 500'd on /about/editorialMasthead specifically. Because "/about"
+  // was originally matched with a loose substring check, that one failing
+  // page was wrongly treated as relevant to all 20 criteria, dropping
+  // unrelated ones like advertising_disclosure to `unknown` too.
+  // /about/editorialMasthead is nested under /about but is a narrow,
+  // specific page (the board roster) -- it must only count as relevant to
+  // the criteria that actually list it in their own relevantPathKeywords.
+  const pages = [
+    { url: WEBSITE, fetch_status: 'ok', http_status: 200, body: 'Welcome to the journal.', retrieved_at: '2026-08-12T00:00:00Z' },
+    { url: `${WEBSITE}/about`, fetch_status: 'ok', http_status: 200, body: 'General journal information.', retrieved_at: '2026-08-12T00:00:01Z' },
+    { url: `${WEBSITE}/about/editorialMasthead`, fetch_status: 'server_error', http_status: 500, body: null, retrieved_at: '2026-08-12T00:00:02Z' },
+  ]
+  const advertising = EVIDENCE_CRITERIA.find(c => c.id === 'advertising_disclosure')
+  const editorialBoardResult = resolveCriterion(editorialBoard, pages, WEBSITE)
+  const advertisingResult = resolveCriterion(advertising, pages, WEBSITE)
+  assert.equal(editorialBoardResult.status, 'unknown', 'editorial_board IS relevant to the failed masthead page -- must stay unresolved')
+  assert.equal(advertisingResult.status, 'not_met', 'advertising_disclosure has nothing to do with the masthead page -- homepage and /about were both checked successfully, so this is a confident absence')
+})
+
 test('resolveAllCriteria returns exactly one item per EVIDENCE_CRITERIA entry, weights matching AJR-E-1.1-SPEC.md', () => {
   const items = resolveAllCriteria([], null)
   assert.equal(items.length, EVIDENCE_CRITERIA.length)

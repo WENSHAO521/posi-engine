@@ -43,12 +43,16 @@ function hasAny(text, patterns) {
 
 /** Path substrings (matched against a fetched URL's pathname, case-
  * insensitive) that are ALWAYS considered relevant to every criterion --
- * a journal's homepage, its OJS "About the Journal" submenu, and its
- * submissions page frequently bundle several policies onto one page even
- * when a dedicated criterion-specific path also exists. `homepage` is a
- * synthetic marker resolved against the journal's own website_url, not a
- * literal substring. */
-const ALWAYS_RELEVANT_PATH_SUBSTRINGS = ['/about', '/about/submissions', '/about/editorialteam', '/about/editorialmasthead']
+ * a journal's homepage and its OJS "About the Journal" landing/submissions
+ * pages frequently bundle several policies onto one page even when a
+ * dedicated criterion-specific path also exists. Deliberately does NOT
+ * include /about/editorialTeam or /about/editorialMasthead: those pages
+ * are specifically the editorial-board roster, not a general policy
+ * bundle -- they're already listed in editorial_board's/editor_identity's
+ * own `relevantPathKeywords` below, and including them here would let a
+ * fetch failure on a narrow board-roster page wrongly mark unrelated
+ * criteria like `advertising_disclosure` or `ai_use_policy` unresolved. */
+const ALWAYS_RELEVANT_PATH_SUBSTRINGS = ['/about', '/about/submissions']
 
 /**
  * Evidence Coverage weights below match AJR-E-1.1-SPEC.md's item tables
@@ -141,10 +145,16 @@ export const EVIDENCE_CRITERIA = Object.freeze([
  * @returns {boolean}
  */
 function isRelevantPage(url, websiteUrl, relevantPathKeywords) {
-  if (websiteUrl && url.replace(/\/+$/, '') === websiteUrl.replace(/\/+$/, '')) return true
-  const lower = url.toLowerCase()
-  if (ALWAYS_RELEVANT_PATH_SUBSTRINGS.some(p => lower.includes(p))) return true
-  return relevantPathKeywords.some(k => lower.includes(k))
+  const normalized = url.replace(/\/+$/, '').toLowerCase()
+  if (websiteUrl && normalized === websiteUrl.replace(/\/+$/, '').toLowerCase()) return true
+  // Exact-suffix match, not substring-includes: "/about" must not also
+  // match "/about/editorialMasthead" -- that nested page is a narrower,
+  // specific page (the board roster) that should only count as relevant
+  // to the criteria that actually list it in their own
+  // relevantPathKeywords, not to every criterion via a loose "/about"
+  // prefix match.
+  if (ALWAYS_RELEVANT_PATH_SUBSTRINGS.some(p => normalized.endsWith(p))) return true
+  return relevantPathKeywords.some(k => normalized.includes(k))
 }
 
 /**
