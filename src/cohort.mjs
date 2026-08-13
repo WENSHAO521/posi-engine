@@ -1,8 +1,11 @@
 /**
- * Peer-cohort construction — shared by all three quartile tracks (E-Q,
- * M-Q, Citation Q — see ranking.mjs). Implements the "POSI Journal
- * Evaluation & Ranking Framework 1.0" cohort rules that are common across
- * all three:
+ * Peer-cohort construction for the quartile tracks (E-Q, M-Q, Citation Q —
+ * see quartile-tracks.mjs/ranking.mjs). The confidence-filtering rule below
+ * is shared by all three; the minimum-cohort-size fallback chain is used by
+ * E-Q and M-Q only — Citation Q instead follows PJR-SPEC.md § 8's flat
+ * rule (primary PSC L2 category, N >= 20, no L1 fallback) via
+ * ranking.mjs's rankCategory(), not this module. See quartile-tracks.mjs's
+ * header for why the two tracks deliberately differ.
  *
  *   1. Only `psc_confidence` 'high' or 'verified' may enter a peer cohort
  *      (a `medium`/`low`/`unclassified` guess may still be DISPLAYED, but
@@ -14,9 +17,9 @@
  *      impossible to make by construction, since building a cohort without
  *      going through buildPeerCohorts()/isRankEligiblePscConfidence() is
  *      the only way to reintroduce the bug.
- *   2. Minimum cohort size, with a fallback chain: try PSC Level 3 (>=20)
- *      -> Level 2 (>=20) -> Level 1 (>=30) -> no quartile (score still
- *      shown, quartile explicitly "unavailable — insufficient peer
+ *   2. E-Q/M-Q minimum cohort size, with a fallback chain: try PSC Level 3
+ *      (>=20) -> Level 2 (>=20) -> Level 1 (>=30) -> no quartile (score
+ *      still shown, quartile explicitly "unavailable — insufficient peer
  *      cohort", never forced out of an undersized group).
  *
  * Pure functions only: given already-classified entries (each carrying its

@@ -14,23 +14,14 @@
  * implementation, not two copies that could silently drift). See
  * percentileMidrank() below.
  *
- * FLAGGED DEVIATION (documented per the task's own instructions, not
- * silently resolved): posi-data/AJR-SPEC.md § 5 states the L3>=20/L2>=20/
- * L1>=30 fallback-chain minimum applies to "each of the three systems"
- * including Citation Q. posi-data/PJR-SPEC.md § 8 — already published,
- * already implemented and used by src/ranking.mjs's rankCategory() and the
- * seed-corpus pipeline — defines Citation Q with a flat
- * `MIN_CATEGORY_SIZE = 20` and NO Level-1 fallback. Rather than silently
- * changing rankCategory()'s already-published behavior to match
- * AJR-SPEC.md § 5 (which the task's own instructions say not to do to a
- * published spec), rankCitationTrack() below reuses rankCategory()
- * UNCHANGED — Citation Q keeps its existing flat L2-only rule. The new
- * L3/L2/L1 fallback chain (via cohort.mjs) is applied only to the
- * newly-built E-Q and M-Q tracks, which is what the framework's own E-Q/
- * M-Q sections explicitly specify inline ("Minimum cohort: PSC L2 >=20
- * else PSC L1 fallback >=30 else 'score valid, quartile unavailable'").
- * This inconsistency between AJR-SPEC.md § 5 and PJR-SPEC.md § 8 is left
- * for the owner to resolve explicitly, not harmonized here.
+ * Resolved cohort rule (posi-data/AJR-SPEC.md § 5 vs PJR-SPEC.md § 8,
+ * settled 2026-08-13 — see posi-data/PJR-SPEC.md § 8 for the authoritative
+ * text): E-Q and M-Q use the L3>=20 -> L2>=20 -> L1>=30 fallback chain,
+ * via cohort.mjs's buildPeerCohorts(). Citation Q does not: it keeps
+ * PJR-SPEC.md § 8's original flat rule — primary PSC L2 category only,
+ * N >= 20, no L1 fallback — via rankCategory() below, UNCHANGED from its
+ * already-published behavior. The two tracks are intentionally different,
+ * not accidentally inconsistent.
  */
 
 import { rankCategory, RANKING_METHODOLOGY_VERSION, MIN_CATEGORY_SIZE } from './ranking.mjs'

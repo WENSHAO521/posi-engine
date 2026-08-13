@@ -67,13 +67,17 @@ canonical data store — this repo has no database of its own.
 > one) and `registry/excluded-identities.csv` for zero-evidence records.
 > `scripts/verify-benchmark-counts.mjs` gives every migration a
 > reconciliation check against a committed `expected-count.json` fixture.
-> `scripts/compute-benchmark-citation-q-2026.mjs` then computed a
-> *provisional* Citation Q (PSC classification + a conservative lifecycle
-> check + OpenAlex's own 2yr-mean-citedness, explicitly not a full
-> evidence-based AJR-M score) for the 3,296 newly-ingested journals. Full
-> writeups: `posi-data`'s `audits/migrations/elsevier-jnlactive-
-> expansion-2026/`, `frontiers-expansion-2026/`, and
-> `benchmark-citation-q-2026/`.
+> `scripts/compute-benchmark-citation-preview-2026.mjs` (supersedes the
+> withdrawn `compute-benchmark-citation-q-2026.mjs`, which fed OpenAlex's
+> 2yr-mean-citedness into the real `rankCategory()`/`rankCitationTrack()`
+> ranking functions as if it were PCI — see the current script's header)
+> computes a diagnostic-only `citation_preview` (PSC classification + a
+> conservative lifecycle check + OpenAlex's own 2yr-mean-citedness,
+> explicitly not PCI, not ranked, and not a full evidence-based AJR-M
+> score) for the 3,296 newly-ingested journals. Full writeups: `posi-data`'s
+> `audits/migrations/elsevier-jnlactive-expansion-2026/`,
+> `frontiers-expansion-2026/`, and `benchmark-citation-q-2026/` (marked
+> superseded / withdrawn from ranking use).
 
 ## What this is
 

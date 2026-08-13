@@ -1,49 +1,38 @@
 #!/usr/bin/env node
 /**
- * compute-benchmark-citation-q-2026.mjs
+ * compute-benchmark-citation-preview-2026.mjs
  *
- * For every Global Benchmark journal that doesn't yet have a real
- * evidence-based AJR score (early_stage_rating is null on the bulk-
- * ingested Elsevier/Frontiers records -- see audits/migrations/), computes
- * a *provisional* Citation Q ranking and writes it to a new
- * `citation_rating` field. Deliberately does NOT touch `early_stage_rating`
- * -- that field is reserved for a real evidence-based AJR-E/AJR-M score
- * (per its own documented contract in the website's types.ts), and running
- * a full evidence crawl across ~4000 journals (most on major-publisher
- * platforms already known to block ~73% of requests, per the Core
- * Collection Evidence ETL v1 finding) is not attempted here.
+ * Supersedes compute-benchmark-citation-q-2026.mjs (2026-08-12/13), which
+ * this hotfix withdraws. That script fed OpenAlex's `summary_stats.
+ * 2yr_mean_citedness` into `quartile-tracks.mjs`'s `rankCitationTrack()`
+ * as if it were `pci`, producing a real `citation_q.rank/percentile/
+ * quartile` for 2,614 Global Benchmark journals. Two direct conflicts
+ * with already-frozen methodology, found on review:
  *
- * What IS computed, and how, mirrors the site's own existing
- * /citation-reports page exactly: OpenAlex's `summary_stats.
- * 2yr_mean_citedness` as a *provisional* citation figure, explicitly
- * labeled "not yet official PCI" (the real PJR-computed PCI needs a
- * formal release per PJR-SPEC.md, not done for Core Collection either
- * yet) -- not a new, heavier per-article citation-window computation.
- * This keeps the claim honest without requiring the expensive per-work
- * OpenAlex pagination fetch-pjr-source-data.mjs uses for the real PCI/
- * PCI-5 pipeline.
+ *   1. AJR-SPEC.md §14 ("Global Benchmark membership is not ranking
+ *      eligibility"): real ranking eligibility requires collection
+ *      eligibility + lifecycle + PSC high/verified confidence + Evidence
+ *      Coverage eligibility + a real cohort gate. This script's `mature`
+ *      bucket is an admitted heuristic (counts_by_year shows activity
+ *      >=5 years back) -- explicitly NOT the real FPD-1.0/LIFECYCLE-1.1
+ *      determination -- and no Evidence Coverage crawl ran at all.
+ *   2. rankCitationTrack()'s own contract takes `{ journal_id, pci }` --
+ *      PCI is POSI's own citable-items/citation-window calculation
+ *      (PJR-SPEC.md §5-6), not OpenAlex's 2yr_mean_citedness. Labeling
+ *      the OpenAlex figure's rank/percentile "Citation Q1-4" borrowed the
+ *      real metric's name for a different number.
  *
- * Per journal, a single OpenAlex singleton source lookup fetches:
- *   - topics                 -> psc-classify.mjs's classifyPsc()
- *   - summary_stats           -> two_yr_mean_citedness, h_index (provisional citation figure)
- *   - works_count             -> psc-classify.mjs's confidence gate
- *   - counts_by_year          -> lifecycle bucket heuristic (see below)
- *
- * Lifecycle bucket (NOT the real FPD-1.0/LIFECYCLE-1.1 methodology, which
- * needs an actual first-publication-date resolution -- see
- * src/first-publication-date.mjs/src/lifecycle.mjs, unused here on
- * purpose): a journal is bucketed "mature" only if OpenAlex's
- * counts_by_year shows at least one non-zero entry >= 5 years before this
- * run's year -- real, checkable evidence of being 60+ months old, not an
- * assumption. Absence of such evidence buckets a journal "not_yet_mature"
- * (conservatively -- POSI's own "unknown is not the favorable case"
- * principle applies here the same as everywhere else), never "unknown".
- *
- * Every HTTP response is cached to disk (same pattern as
- * fetch-pjr-source-data.mjs) so an interrupted run resumes cleanly.
+ * This script computes the same PSC classification + lifecycle-bucket
+ * heuristic + raw OpenAlex citedness figure, but stops there: no cohort
+ * grouping, no rankCategory() call, no rank/percentile/quartile of any
+ * kind. Output is explicitly `status: "diagnostic_only"` and is not
+ * intended to be read as, or ever silently promoted into, a real Citation
+ * Q. See posi-data's audits/migrations/benchmark-citation-q-2026/README.md
+ * for the superseded-run writeup, and
+ * audits/migrations/citation-preview-correction-2026/ for this fix.
  *
  * Usage:
- *   node scripts/compute-benchmark-citation-q-2026.mjs \
+ *   node scripts/compute-benchmark-citation-preview-2026.mjs \
  *     --benchmark <path to corpus/global-benchmark.json> \
  *     --cache-dir <dir> \
  *     --out <output dir> \
@@ -53,11 +42,10 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
 import { classifyPsc } from '../src/psc-classify.mjs'
-import { rankCitationTrack } from '../src/quartile-tracks.mjs'
 
 const OPENALEX_BASE = 'https://api.openalex.org'
 const MAILTO = 'posi@panorama-sg.com'
-const CITATION_RATING_VERSION = 'CITATION-Q-PROVISIONAL-1.0'
+export const CITATION_PREVIEW_VERSION = 'CITATION-PREVIEW-1.0'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -132,7 +120,7 @@ function sourceFields() {
 
 async function fetchSource(sourceId, cacheDir) {
   const url = `${OPENALEX_BASE}/sources/${sourceId}?select=${sourceFields()}&mailto=${MAILTO}`
-  return fetchJsonWithRetry(url, cacheDir, `citq_source_${sourceId}`)
+  return fetchJsonWithRetry(url, cacheDir, `citprev_source_${sourceId}`)
 }
 
 function isMature(countsByYear, thisYear, lookback) {
@@ -165,8 +153,8 @@ async function processJournal(journal, { cacheDir, thisYear, lookback }) {
 
 async function main() {
   const benchmarkPath = resolve(arg('benchmark'))
-  const cacheDir = resolve(arg('cache-dir', 'citation-q-cache'))
-  const outDir = resolve(arg('out', 'citation-q-output'))
+  const cacheDir = resolve(arg('cache-dir', 'citation-preview-cache'))
+  const outDir = resolve(arg('out', 'citation-preview-output'))
   const concurrency = parseInt(arg('concurrency', '8'), 10)
   const limit = arg('limit') ? parseInt(arg('limit'), 10) : null
   const lookback = parseInt(arg('min-mature-year-lookback', '5'), 10)
@@ -176,8 +164,8 @@ async function main() {
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true })
 
   const benchmark = JSON.parse(readFileSync(benchmarkPath, 'utf-8'))
-  // Only journals with no real evidence-based rating yet -- never overwrites
-  // a genuine early_stage_rating (curated seed's 993 records all have one).
+  // Only journals with no real evidence-based rating -- never overwrites a
+  // genuine early_stage_rating (curated seed's ~1000 records all have one).
   let candidates = benchmark.filter(j => j.early_stage_rating == null)
   if (limit) candidates = candidates.slice(0, limit)
   console.log(`Benchmark total: ${benchmark.length}. Candidates (no early_stage_rating): ${candidates.length}${limit ? ` (limited to ${candidates.length})` : ''}.`)
@@ -188,51 +176,41 @@ async function main() {
   const classified = results.filter(r => !r.error)
   console.log(`OpenAlex fetch errors: ${errored.length}. Classified: ${classified.length}.`)
 
-  const matureHighConf = classified.filter(r => r.lifecycle_bucket === 'mature' && r.psc_confidence === 'high' && r.psc_category && r.two_yr_mean_citedness != null)
-  const byCategory = new Map()
-  for (const r of matureHighConf) {
-    if (!byCategory.has(r.psc_category)) byCategory.set(r.psc_category, [])
-    byCategory.get(r.psc_category).push(r)
-  }
-
-  const rankingByCode = new Map()
-  for (const [category_code, entries] of byCategory) {
-    const rankInput = entries.map(e => ({ journal_id: e.journal_code, pci: e.two_yr_mean_citedness }))
-    const ranked = rankCitationTrack(rankInput, { category_code, metric_year: thisYear })
-    for (const r of ranked) rankingByCode.set(r.journal_id, r)
-  }
-
   const today = new Date().toISOString().slice(0, 10)
   const finalRecords = new Map()
   for (const r of results) {
     if (r.error) {
-      finalRecords.set(r.journal_code, {
-        citation_rating: null,
-        error: r.error,
-      })
+      finalRecords.set(r.journal_code, { citation_preview: null, error: r.error })
       continue
     }
-    const ranking = rankingByCode.get(r.journal_code) ?? null
     finalRecords.set(r.journal_code, {
-      citation_rating: {
-        psc_category: r.psc_category,
-        psc_confidence: r.psc_confidence,
-        lifecycle_bucket: r.lifecycle_bucket,
-        two_yr_mean_citedness: r.two_yr_mean_citedness,
+      citation_preview: {
+        source: 'OpenAlex',
+        metric: '2yr_mean_citedness',
+        value: r.two_yr_mean_citedness,
         h_index: r.h_index,
         works_count: r.works_count,
-        citation_q: ranking ? {
-          quartile: ranking.quartile,
-          quartile_label: ranking.quartile_label,
-          percentile: ranking.percentile,
-          rank: ranking.rank,
-          cohort_size: ranking.category_size,
-          ranking_method: ranking.ranking_method,
-          category_code: ranking.category_code,
-        } : null,
+        psc_category: r.psc_category,
+        psc_confidence: r.psc_confidence,
+        history_evidence: {
+          // NOT the real FPD-1.0/LIFECYCLE-1.1 determination -- a
+          // conservative proxy: real, checkable evidence of publishing
+          // activity >=5 years back, or its absence. Never treated as a
+          // lifecycle-stage assignment.
+          has_activity_5y_ago: r.lifecycle_bucket === 'mature',
+        },
+        // Deliberately null, always. This is a diagnostic preview, not a
+        // ranking -- no cohort was built, no rankCategory()/
+        // rankCitationTrack() call happens anywhere in this script. See
+        // module header for why the previous version's rank/percentile/
+        // quartile output was withdrawn.
+        rank: null,
+        percentile: null,
+        quartile: null,
+        status: 'diagnostic_only',
         rated_at: today,
-        version: CITATION_RATING_VERSION,
-        source_note: 'Provisional -- OpenAlex 2yr mean citedness, not yet official PJR PCI. See /citation-reports.',
+        version: CITATION_PREVIEW_VERSION,
+        source_note: 'Diagnostic preview only -- OpenAlex 2yr mean citedness, not PCI. Not ranked, not Citation Q, not used for any POSI ranking or eligibility decision.',
       },
     })
   }
@@ -243,12 +221,10 @@ async function main() {
     candidates: candidates.length,
     openalex_fetch_errors: errored.length,
     classified: classified.length,
-    mature_high_confidence_classified: matureHighConf.length,
-    categories_formed: byCategory.size,
-    ranked_with_quartile: [...rankingByCode.values()].filter(r => r.ranking_method === 'pci_midrank').length,
-    ranking_unavailable_cohort_too_small: [...rankingByCode.values()].filter(r => r.ranking_method === 'unavailable').length,
-    mature_unclassified_or_low_confidence: classified.filter(r => r.lifecycle_bucket === 'mature' && !(r.psc_confidence === 'high' && r.psc_category)).length,
-    not_yet_mature: classified.filter(r => r.lifecycle_bucket === 'not_yet_mature').length,
+    mature_bucket: classified.filter(r => r.lifecycle_bucket === 'mature').length,
+    not_yet_mature_bucket: classified.filter(r => r.lifecycle_bucket === 'not_yet_mature').length,
+    high_confidence_psc: classified.filter(r => r.psc_confidence === 'high' && r.psc_category).length,
+    note: 'No rank/percentile/quartile computed by this script, by design. See CITATION_PREVIEW_VERSION and each record\'s status field.',
   }
 
   writeFileSync(join(outDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8')
