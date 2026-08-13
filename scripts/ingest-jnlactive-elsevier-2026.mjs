@@ -33,7 +33,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
 import { parseCsv } from '../src/showjcr/csv.mjs'
-import { buildExistingIssnSet, validateConcurrency, partitionOpenAlexLookups, buildExcludedIdentitySet } from '../src/migration/bulk-ingest-helpers.mjs'
+import { buildExistingIssnSet, validateConcurrency, partitionOpenAlexLookups, buildExcludedIdentitySet, validateIsoCountryCode } from '../src/migration/bulk-ingest-helpers.mjs'
 
 const OPENALEX_BASE = 'https://api.openalex.org'
 const SELECT_FIELDS = ['id', 'issn_l', 'issn', 'display_name', 'type', 'host_organization_name', 'homepage_url', 'is_oa', 'is_in_doaj', 'works_count', 'country_code']
@@ -116,11 +116,20 @@ function buildRecord(csvRow, openAlex, seq) {
     journal_code: `bench-${slugify(csvRow.title)}-${String(seq).padStart(4, '0')}`,
     title: csvRow.title,
     short_title: csvRow.title,
+    // jnlactive.csv's ISSN column has no print/online marking -- Elsevier's
+    // own export documentation doesn't distinguish, and neither field can
+    // be inferred from a single column. issn_online/issn_print stay null
+    // rather than guessing; the generic value is kept as `issn` instead
+    // (see buildExistingIssnSet()'s doc comment for why dedup still works).
     issn_print: null,
-    issn_online: csvRow.issn,
+    issn_online: null,
+    issn: csvRow.issn,
     publisher: 'Elsevier BV',
-    country: openAlex?.country_code ?? null,
-    language: 'English',
+    country: validateIsoCountryCode(openAlex?.country_code),
+    // jnlactive.csv has no language column, and OpenAlex's source-level
+    // lookup doesn't return one either -- null rather than assuming
+    // English for the entire catalog without checking.
+    language: null,
     frequency: '',
     open_access: openAlex?.is_oa ?? false,
     license: '',

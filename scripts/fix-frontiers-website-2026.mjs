@@ -62,7 +62,11 @@ function main() {
   const fixes = []
   const noCsvMatch = []
   for (const rec of frontiersRecords) {
-    const issn = rec.issn_online || rec.issn_print
+    // ingest-frontiers-2026.mjs (fixed 2026-08-13) no longer writes a
+    // kind-unspecified CSV ISSN into issn_online -- it's kept as `issn`
+    // instead. Checking all three keeps this matching records ingested
+    // either before or after that fix.
+    const issn = rec.issn_online || rec.issn_print || rec.issn
     const csvRow = issn ? csvByIssn.get(issn) : null
     if (!csvRow) { noCsvMatch.push({ id: rec.id, title: rec.title, issn }); continue }
     if (csvRow.url && csvRow.url !== rec.website_url) {
