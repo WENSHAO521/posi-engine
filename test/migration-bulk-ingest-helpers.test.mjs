@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildExistingIssnSet, validateConcurrency, partitionOpenAlexLookups, buildExcludedIdentitySet } from '../src/migration/bulk-ingest-helpers.mjs'
+import { buildExistingIssnSet, validateConcurrency, partitionOpenAlexLookups, buildExcludedIdentitySet, validateIsoCountryCode } from '../src/migration/bulk-ingest-helpers.mjs'
 
 test('buildExistingIssnSet includes both issn_print and issn_online, not just one via ||', () => {
   const benchmark = [
@@ -17,6 +17,35 @@ test('buildExistingIssnSet includes both issn_print and issn_online, not just on
 test('buildExistingIssnSet drops null/empty ISSNs', () => {
   const set = buildExistingIssnSet([{ issn_online: null, issn_print: '' }, { issn_online: '4444-4444' }])
   assert.deepEqual([...set], ['4444-4444'])
+})
+
+test('buildExistingIssnSet also includes the kind-unspecified `issn` field', () => {
+  // Bulk-publisher-catalog records with no print/online marking on their
+  // source ISSN column carry it as `issn`, not `issn_online` -- this set
+  // must still catch it, or a later ingest run would treat the same
+  // journal as new every time.
+  const set = buildExistingIssnSet([
+    { issn_online: null, issn_print: null, issn: '5555-5555' },
+    { issn_online: '6666-6666', issn_print: null },
+  ])
+  assert.ok(set.has('5555-5555'))
+  assert.ok(set.has('6666-6666'))
+  assert.equal(set.size, 2)
+})
+
+test('validateIsoCountryCode accepts a clean two-letter uppercase code', () => {
+  assert.equal(validateIsoCountryCode('US'), 'US')
+  assert.equal(validateIsoCountryCode('GB'), 'GB')
+})
+
+test('validateIsoCountryCode rejects lowercase, wrong length, non-string, null/undefined', () => {
+  assert.equal(validateIsoCountryCode('us'), null)
+  assert.equal(validateIsoCountryCode('USA'), null)
+  assert.equal(validateIsoCountryCode('U'), null)
+  assert.equal(validateIsoCountryCode(''), null)
+  assert.equal(validateIsoCountryCode(null), null)
+  assert.equal(validateIsoCountryCode(undefined), null)
+  assert.equal(validateIsoCountryCode(123), null)
 })
 
 test('validateConcurrency accepts a positive integer', () => {

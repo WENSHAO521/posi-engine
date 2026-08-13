@@ -9,15 +9,34 @@
  */
 
 /**
- * A benchmark record can carry both issn_print and issn_online. Indexing
- * on only one of them (e.g. `r.issn_online || r.issn_print`) means a CSV
- * row bearing the OTHER of the two ISSNs looks "new" even though the
- * journal is already in the benchmark -- this collects both.
- * @param {{ issn_online?: string|null, issn_print?: string|null }[]} benchmarkRecords
+ * A benchmark record can carry issn_print, issn_online, and/or the
+ * kind-unspecified `issn` field (see buildRecord()'s own comment in each
+ * ingest script for why a bulk-publisher-catalog ISSN column with no
+ * explicit print/online marking is never written into issn_online).
+ * Indexing on only one of them (e.g. `r.issn_online || r.issn_print`)
+ * means a CSV row bearing a different one of the three looks "new" even
+ * though the journal is already in the benchmark -- this collects all.
+ * @param {{ issn_online?: string|null, issn_print?: string|null, issn?: string|null }[]} benchmarkRecords
  * @returns {Set<string>}
  */
 export function buildExistingIssnSet(benchmarkRecords) {
-  return new Set(benchmarkRecords.flatMap(r => [r.issn_online, r.issn_print]).filter(Boolean))
+  return new Set(benchmarkRecords.flatMap(r => [r.issn_online, r.issn_print, r.issn]).filter(Boolean))
+}
+
+/**
+ * OpenAlex's own `country_code` field is documented as ISO 3166-1 alpha-2
+ * and is normally already clean, but this ingestion pipeline has been
+ * burned before by trusting an upstream field's documented shape without
+ * checking it (see parseFrontiersCsv()'s ISSN-format validation, added
+ * after a "Coming Soon" placeholder almost got written into issn_online).
+ * Defensive, not redundant: a malformed or unexpected value is dropped to
+ * `null` rather than silently written into a field the website displays
+ * as a country.
+ * @param {string|null|undefined} code
+ * @returns {string|null}
+ */
+export function validateIsoCountryCode(code) {
+  return typeof code === 'string' && /^[A-Z]{2}$/.test(code) ? code : null
 }
 
 /**
