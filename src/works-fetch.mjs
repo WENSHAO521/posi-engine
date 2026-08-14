@@ -49,6 +49,16 @@ export const WORKS_SELECT_FIELDS = [
   'deposited', 'issued',
 ]
 
+/** Fields requested for PCS's data-acquisition script (PCS-1.0-SPEC.md
+ * § 8) — a much lighter payload than WORKS_SELECT_FIELDS since PCS needs
+ * only enough per work to bucket it into the 4-year publication window,
+ * normalize its document_type (crossref-document-type.mjs), and read its
+ * citation count. `is-referenced-by-count` is Crossref's real field name
+ * for its aggregate citation count (verified live) and is the one field
+ * WORKS_SELECT_FIELDS never requested — Article-Sample ETL v1 had no use
+ * for it, but PCS's entire numerator comes from it. */
+export const PCS_SELECT_FIELDS = ['DOI', 'type', 'is-referenced-by-count', 'published', 'issued']
+
 /**
  * @param {number|string|null} outcome - an HTTP status, or 'timeout'/'network_error'
  * @returns {boolean} whether this outcome is worth retrying (transient),
@@ -67,18 +77,23 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
  * @param {{
  *   cursor?: string, rows?: number, filter?: string, sort?: string, order?: string,
  *   apiKey?: string, mailto?: string, fetchImpl?: Function, timeoutMs?: number, maxAttempts?: number,
- * }} [opts]
+ *   selectFields?: string[],
+ * }} [opts] - `selectFields` defaults to WORKS_SELECT_FIELDS (Article-Sample
+ *   ETL v1's field list); pass PCS_SELECT_FIELDS for PCS's lighter,
+ *   is-referenced-by-count-carrying payload instead of adding a second
+ *   fetch function.
  * @returns {Promise<{ status: number|null, totalResults: number|null, items: object[], nextCursor: string|null, error: string|null }>}
  */
 export async function fetchCrossrefWorksPage(issn, opts = {}) {
   const {
     cursor = '*', rows = 50, filter = 'type:journal-article', sort = 'published', order = 'desc',
     apiKey, mailto = DEFAULT_MAILTO, fetchImpl = fetch, timeoutMs = 15000, maxAttempts = 4,
+    selectFields = WORKS_SELECT_FIELDS,
   } = opts
 
   const params = new URLSearchParams({
     rows: String(rows), cursor, filter, sort, order,
-    select: WORKS_SELECT_FIELDS.join(','), mailto,
+    select: selectFields.join(','), mailto,
   })
   if (apiKey) params.set('api_key', apiKey)
   const url = `${CROSSREF_BASE}/journals/${encodeURIComponent(issn)}/works?${params.toString()}`
@@ -133,6 +148,20 @@ export async function fetchCrossrefTotalResults(issn, opts = {}) {
  * ajr-early-stage.mjs) so it never actually constrains a normal-sized
  * Early-Stage journal. */
 export const MAX_WORKS_FETCHED_PER_JOURNAL = 300
+
+/** PCS's own ceiling (PCS-1.0-SPEC.md § 5: "no 200-item sampling cap" —
+ * every eligible work in the 4-year window, full stop). This is NOT a
+ * sampling cap the way MAX_WORKS_FETCHED_PER_JOURNAL is one for Article-
+ * Sample ETL v1 — it exists only as a defensive backstop against a
+ * runaway/looping fetch (e.g. a cursor that somehow never terminates),
+ * set far above any real journal's true 4-year output. Verified live
+ * against Scientific Reports (ISSN 2045-2322), the single highest-volume
+ * journal actually found in this project's Global Benchmark corpus:
+ * 126,635 works in the 2022-2025 window (see the PCS ETL audit) — this
+ * ceiling is more than 15x that real observed maximum, so it should never
+ * actually bind for any journal in scope. If it ever does bind, that is a
+ * fetch-loop bug to investigate, not a legitimate truncation. */
+export const PCS_MAX_WORKS_PER_JOURNAL = 2_000_000
 
 /**
  * Pages through a journal's full (capped) Crossref works list, most-recent

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   fetchCrossrefWorksPage, fetchCrossrefTotalResults, fetchAllCrossrefWorks,
   checkDoiResolution, checkOaiPmhEndpoint, WORKS_SELECT_FIELDS, MAX_WORKS_FETCHED_PER_JOURNAL,
+  PCS_SELECT_FIELDS, PCS_MAX_WORKS_PER_JOURNAL,
 } from '../src/works-fetch.mjs'
 
 function jsonResponse(body, status = 200) {
@@ -106,6 +107,34 @@ test('fetchAllCrossrefWorks: a real ISSN 404 returns cleanly, no infinite loop',
 
 test('MAX_WORKS_FETCHED_PER_JOURNAL comfortably exceeds ajr-early-stage.mjs TARGET_ARTICLE_SAMPLE_SIZE (30)', () => {
   assert.ok(MAX_WORKS_FETCHED_PER_JOURNAL >= 30)
+})
+
+test('PCS_SELECT_FIELDS carries is-referenced-by-count, which WORKS_SELECT_FIELDS never requested', () => {
+  assert.ok(PCS_SELECT_FIELDS.includes('is-referenced-by-count'))
+  assert.ok(!WORKS_SELECT_FIELDS.includes('is-referenced-by-count'), 'Article-Sample ETL v1 never needed this field -- confirms this is genuinely new, not already covered')
+})
+
+test('PCS_MAX_WORKS_PER_JOURNAL is a defensive backstop far above any real journal (Scientific Reports: 126,635 in its 2022-2025 window), never a sampling cap', () => {
+  assert.ok(PCS_MAX_WORKS_PER_JOURNAL > 126635 * 10)
+})
+
+test('fetchCrossrefWorksPage: selectFields option overrides the default WORKS_SELECT_FIELDS select list sent to Crossref', async () => {
+  let capturedUrl = null
+  const fetchImpl = async (url) => { capturedUrl = url; return jsonResponse({ message: { 'total-results': 0, items: [], 'next-cursor': null } }) }
+  await fetchCrossrefWorksPage('1234-5678', { fetchImpl, selectFields: PCS_SELECT_FIELDS })
+  const url = new URL(capturedUrl)
+  assert.equal(url.searchParams.get('select'), PCS_SELECT_FIELDS.join(','))
+})
+
+test('fetchAllCrossrefWorks: a very high maxItems (PCS_MAX_WORKS_PER_JOURNAL) pages to true exhaustion instead of stopping early', async () => {
+  let calls = 0
+  const fetchImpl = async () => {
+    calls++
+    if (calls <= 3) return jsonResponse({ message: { 'total-results': 250, items: Array.from({ length: 100 }, (_, i) => ({ DOI: `${calls}-${i}` })), 'next-cursor': `c${calls}` } })
+    return jsonResponse({ message: { 'total-results': 250, items: [], 'next-cursor': null } })
+  }
+  const result = await fetchAllCrossrefWorks('1234-5678', { fetchImpl, rows: 100, maxItems: PCS_MAX_WORKS_PER_JOURNAL })
+  assert.equal(result.items.length, 300, 'all pages collected -- no early truncation from the cap')
 })
 
 test('checkDoiResolution: a 302 redirect from doi.org means resolved, target page never fetched', async () => {
