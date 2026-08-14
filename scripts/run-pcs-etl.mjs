@@ -128,6 +128,23 @@ function clearProgress(progressDir, posiId) {
 // Per-journal fetch: bulk cursor pagination over the 4-year window
 // ---------------------------------------------------------------------
 
+/** How many times to retry a SUSPICIOUSLY-empty page (200 status, zero
+ * items, but the journal's own already-fetched item count is still short
+ * of Crossref's own reported total-results) before accepting it as real
+ * exhaustion. Discovered as a real, reproducible issue during the full
+ * 1024-journal run (see the PCS ETL global audit's "cursor anomaly"
+ * section): 3 journals stopped early with a 200/empty page under
+ * concurrency=8 load, but a same-cursor retry moments later returned the
+ * correct remaining page in full -- this is not the well-understood,
+ * legitimate cursor-exhaustion signal fetchAllCrossrefWorks() (works-fetch.mjs)
+ * relies on elsewhere; it looks like a transient artifact of concurrent
+ * load against Crossref's cursor/scroll context rather than a genuine end
+ * of results. A LEGITIMATE end-of-results empty page (totalResults already
+ * fully accounted for) is never retried here -- only the specific
+ * still-short-of-total-results case is. */
+const SUSPICIOUS_EMPTY_PAGE_MAX_RETRIES = 3
+const SUSPICIOUS_EMPTY_PAGE_RETRY_DELAY_MS = 1500
+
 /**
  * @returns {{
  *   status: number|null, error: string|null, totalResults: number|null,
@@ -148,7 +165,7 @@ async function fetchJournalWindow(issn, { startYear, endYear, rows, progressDir,
   }
 
   for (;;) {
-    const page = await fetchCrossrefWorksPage(issn, {
+    let page = await fetchCrossrefWorksPage(issn, {
       cursor, rows, filter, sort: 'created', order: 'asc', selectFields: PCS_SELECT_FIELDS, mailto,
     })
     if (page.status !== 200) {
@@ -157,6 +174,25 @@ async function fetchJournalWindow(issn, { startYear, endYear, rows, progressDir,
       // reflect the shortfall (PCS-1.0-SPEC.md § 7/§ 9).
       return { status: page.status, error: page.error, totalResults: totalResults ?? page.totalResults, rawItems: items, pagesFetched }
     }
+
+    // Suspicious-empty-page retry: a 200 with zero items normally means
+    // real exhaustion (fetchAllCrossrefWorks()'s existing, correct
+    // semantics), but ONLY when it's consistent with Crossref's own
+    // reported total-results. If items.length===0 while we're still short
+    // of totalResults, retry the identical cursor a few times before
+    // accepting it.
+    if (page.items.length === 0 && page.totalResults != null && items.length < page.totalResults) {
+      for (let attempt = 1; attempt <= SUSPICIOUS_EMPTY_PAGE_MAX_RETRIES && page.items.length === 0; attempt++) {
+        await sleep(SUSPICIOUS_EMPTY_PAGE_RETRY_DELAY_MS)
+        page = await fetchCrossrefWorksPage(issn, {
+          cursor, rows, filter, sort: 'created', order: 'asc', selectFields: PCS_SELECT_FIELDS, mailto,
+        })
+        if (page.status !== 200) {
+          return { status: page.status, error: page.error, totalResults: totalResults ?? page.totalResults, rawItems: items, pagesFetched }
+        }
+      }
+    }
+
     pagesFetched++
     totalResults = page.totalResults
     items = items.concat(page.items)
