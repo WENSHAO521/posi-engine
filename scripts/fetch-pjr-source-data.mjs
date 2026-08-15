@@ -8,36 +8,60 @@
  *   1. Source-level citation-impact fields (GET /sources/{id}) — issn_l,
  *      works_count, cited_by_count, summary_stats (2yr_mean_citedness,
  *      h_index), counts_by_year.
- *   2. An exact citable-items count for the PCI 2-year window (metric_year-2,
- *      metric_year-1), via a per_page=1 meta.count-only query filtered to
- *      OpenAlex type article|review (the only two OpenAlex types this
+ *   2. The PCI 2-year window (metric_year-2, metric_year-1) EXHAUSTIVELY —
+ *      every work, uncapped except for EXHAUSTIVE_PAGE_CEILING's defensive
+ *      backstop (see its own doc comment). PCI is the primary metric this
+ *      whole pipeline exists for; its numerator must be exact, not
+ *      estimated from a partial fetch, for every journal regardless of
+ *      volume. type article|review only (the two OpenAlex types this
  *      project's document_type crosswalk marks citable — see
  *      src/openalex-document-type.mjs).
- *   3. Individual works (id, type, publication_year, counts_by_year) for the
- *      PCI-5 5-year window (metric_year-5 .. metric_year-1), same type
- *      filter, paginated up to --max-pages (default 10, 200/page = 2000
- *      works). meta.count on the FIRST page is recorded as the exact 5-year
- *      citable_items count regardless of how many pages are actually
- *      fetched — only the per-work numerator data (counts_by_year, needed
- *      to compute citations received IN metric_year) is capped, and a
- *      journal whose true count exceeds what got fetched is marked
- *      `numerator_capped: true` so downstream metric computation can flag
- *      it rather than silently treating a partial fetch as complete.
+ *   3. The PCI-5 window's OLDER tail (metric_year-5 .. metric_year-3,
+ *      deliberately excluding the 2-year window already fetched
+ *      exhaustively in step 2 — no re-fetching the same works twice),
+ *      capped at --max-pages (default 10, 200/page = 2000 works). PCI-5 is
+ *      this pipeline's secondary metric and PJR-SPEC.md tolerates an
+ *      estimated numerator for it; a journal whose true 5-year count
+ *      exceeds what got fetched is marked `numerator_capped: true` so
+ *      downstream metric computation can flag it rather than silently
+ *      treating a partial fetch as complete. The 2-year portion of PCI-5's
+ *      numerator is always exact (it's the same exhaustive fetch from step
+ *      2), so only the OLDER 3 years can ever be the capped part.
+ *
+ *   BUG FIX (2026-08-15): the original version capped the 2-year PCI window
+ *   itself at --max-pages together with the 5-year window (a single mixed
+ *   fetch over metric_year-5..metric_year-1). For any journal whose 2-year
+ *   citable-item count alone exceeded --max-pages*200 (e.g. JACS: 6,616 in
+ *   a 2-year window against a 2,000-work default cap), the "real" PCI was
+ *   silently computed from a partial, most-recent-biased subset instead of
+ *   the true population — the primary metric this pipeline exists to get
+ *   right. Splitting the exhaustive 2-year fetch from the capped older-tail
+ *   fetch fixes this for every journal size.
  *
  * Every HTTP response is cached to disk keyed by request signature —
  * killing and re-running this script resumes without re-querying anything
  * already cached, same pattern as scripts/enrich-openalex.mjs.
  *
  * Usage:
- *   node scripts/fetch-pjr-source-data.mjs \
+ *   node --env-file=.env scripts/fetch-pjr-source-data.mjs \
  *     --in path/to/global-benchmark.json \
  *     --cache-dir path/to/cache \
  *     --out path/to/output.json \
  *     --metric-year 2025 \
  *     [--max-pages 10] [--concurrency 6] [--limit N]
+ *
+ * OPENALEX_API_KEY is required for the /works filtered-list queries this
+ * script depends on — OpenAlex's /works endpoint now sits behind a paid
+ * tier; the free polite pool (mailto=) is not enough on its own. Put one or
+ * more `OPENALEX_API_KEY=...` lines in a .env file in this repo's root (one
+ * key per line — see loadApiKeys()) and they're all round-robinned per
+ * request, so several keys' separate daily budgets combine into one
+ * effective budget for the run. Falls back to a single process.env
+ * OPENALEX_API_KEY when no .env file exists (e.g. a GitHub Actions
+ * secret). Never hardcoded, never written into any cache/output file.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, createWriteStream } from 'fs'
 import { join, resolve } from 'path'
 
 const OPENALEX_BASE = 'https://api.openalex.org'
@@ -47,6 +71,46 @@ const CITABLE_OPENALEX_TYPES = 'article|review'
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
   return i !== -1 ? process.argv[i + 1] : fallback
+}
+
+/** Each OpenAlex key carries its own separate daily $-budget, so multiple
+ * keys combine into a larger effective daily budget for one run — but only
+ * if something actually rotates across them. Node's `--env-file` keeps
+ * just the LAST of several repeated `OPENALEX_API_KEY=` lines in a .env
+ * file (every earlier one is silently dropped), so a multi-key .env has to
+ * be parsed by hand here to recover all of them, rather than trusting
+ * `process.env.OPENALEX_API_KEY`. Falls back to the single env-provided
+ * key (e.g. a GitHub Actions secret with no local .env file) when no .env
+ * file exists at all. Never logged, never written to any cache/output
+ * file — only used to build request URLs.
+ */
+function loadApiKeys() {
+  const envPath = resolve('.env')
+  if (existsSync(envPath)) {
+    const keys = []
+    for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
+      const m = line.match(/^\s*OPENALEX_API_KEY\s*=\s*(.+?)\s*$/)
+      if (m && m[1]) keys.push(m[1])
+    }
+    const unique = [...new Set(keys)]
+    if (unique.length > 0) return unique
+  }
+  return process.env.OPENALEX_API_KEY ? [process.env.OPENALEX_API_KEY] : []
+}
+
+/** Round-robins across every available key, one call = one key, so a
+ * multi-journal run spreads its request cost evenly across all of them
+ * instead of exhausting one key's daily budget before touching the rest.
+ * Coarser rotation (e.g. one key per journal) would let a single
+ * high-volume journal (a JACS-scale mega-journal's exhaustive 2-year
+ * fetch, dozens of requests) land entirely on one key by chance; per-call
+ * rotation spreads even that across all keys. Safe to call with zero keys
+ * (returns undefined, same as "no key" — every fetch function already
+ * treats a falsy apiKey as "send unauthenticated").
+ */
+function makeKeyRotator(keys) {
+  let i = 0
+  return () => (keys.length === 0 ? undefined : keys[i++ % keys.length])
 }
 
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
@@ -154,7 +218,7 @@ function shortSourceFields() {
   return ['id', 'issn_l', 'issn', 'works_count', 'cited_by_count', 'summary_stats', 'counts_by_year', 'display_name'].join(',')
 }
 
-function worksListUrl({ sourceId, fromYear, toYear, select, perPage, cursor }) {
+function worksListUrl({ sourceId, fromYear, toYear, select, perPage, cursor, nextKey }) {
   const params = new URLSearchParams({
     filter: `primary_location.source.id:${sourceId},type:${CITABLE_OPENALEX_TYPES},publication_year:${fromYear}-${toYear}`,
     select,
@@ -170,27 +234,32 @@ function worksListUrl({ sourceId, fromYear, toYear, select, perPage, cursor }) {
   // far more likely to be fully covered than the 5-year PCI-5 tail, even
   // for a capped journal. See numerator_capped in this script's output.
   params.set('sort', 'publication_date:desc')
+  const apiKey = nextKey?.()
+  if (apiKey) params.set('api_key', apiKey)
   return `${OPENALEX_BASE}/works?${params.toString()}`
 }
 
-async function fetchSource(sourceId, cacheDir) {
-  const url = `${OPENALEX_BASE}/sources/${sourceId}?select=${shortSourceFields()}&mailto=${MAILTO}`
+async function fetchSource(sourceId, cacheDir, nextKey) {
+  const params = new URLSearchParams({ select: shortSourceFields(), mailto: MAILTO })
+  const apiKey = nextKey?.()
+  if (apiKey) params.set('api_key', apiKey)
+  const url = `${OPENALEX_BASE}/sources/${sourceId}?${params.toString()}`
   return fetchJsonWithRetry(url, cacheDir, `source_${sourceId}`)
 }
 
-async function fetchCitableCount(sourceId, fromYear, toYear, cacheDir) {
-  const url = worksListUrl({ sourceId, fromYear, toYear, select: 'id', perPage: 1, cursor: '*' })
+async function fetchCitableCount(sourceId, fromYear, toYear, cacheDir, nextKey) {
+  const url = worksListUrl({ sourceId, fromYear, toYear, select: 'id', perPage: 1, cursor: '*', nextKey })
   return fetchJsonWithRetry(url, cacheDir, `count_${sourceId}_${fromYear}_${toYear}`)
 }
 
-async function fetchWorksPaged(sourceId, fromYear, toYear, maxPages, cacheDir) {
+async function fetchWorksPaged(sourceId, fromYear, toYear, maxPages, cacheDir, nextKey) {
   const select = 'id,type,publication_year,counts_by_year'
   let cursor = '*'
   const works = []
   let totalCount = null
   let pages = 0
   for (let page = 0; page < maxPages; page++) {
-    const url = worksListUrl({ sourceId, fromYear, toYear, select, perPage: 200, cursor })
+    const url = worksListUrl({ sourceId, fromYear, toYear, select, perPage: 200, cursor, nextKey })
     const result = await fetchJsonWithRetry(url, cacheDir, `works_${sourceId}_${fromYear}_${toYear}_p${page}`)
     pages++
     if (!result.ok || !result.data) break
@@ -204,28 +273,63 @@ async function fetchWorksPaged(sourceId, fromYear, toYear, maxPages, cacheDir) {
   return { works, totalCount, pages }
 }
 
-async function processJournal(journal, { cacheDir, metricYear, maxPages }) {
+/** Defensive backstop for the exhaustive 2-year PCI fetch — NOT a real
+ * sampling cap (same philosophy as PCS_MAX_WORKS_PER_JOURNAL in this
+ * project's works-fetch.mjs). 500 pages = 100,000 works in a single
+ * 2-calendar-year window is far beyond any real journal ever observed in
+ * this project's corpora (PCS's own audit found Scientific Reports, the
+ * single highest-volume journal in scope, at ~126,635 works across a
+ * 4-YEAR window — roughly 63,000/2yr, well under this ceiling). If this
+ * ever binds, that's a fetch-loop bug to investigate, not a legitimate
+ * truncation — same standard as PCS_MAX_WORKS_PER_JOURNAL's own doc. */
+const EXHAUSTIVE_PAGE_CEILING = 500
+
+/** Pages through a works window with NO practical cap (see
+ * EXHAUSTIVE_PAGE_CEILING) — used only for the 2-year PCI window, where the
+ * numerator must be exact for every journal. Returns the same shape as
+ * fetchWorksPaged() plus `hitCeiling` so a caller can tell "genuinely
+ * exhausted the cursor" apart from "hit the defensive backstop" even
+ * though both are rare/never-expected outcomes for the latter. */
+async function fetchWorksExhaustive(sourceId, fromYear, toYear, cacheDir, nextKey) {
+  const result = await fetchWorksPaged(sourceId, fromYear, toYear, EXHAUSTIVE_PAGE_CEILING, cacheDir, nextKey)
+  return { ...result, hitCeiling: result.pages >= EXHAUSTIVE_PAGE_CEILING }
+}
+
+async function processJournal(journal, { cacheDir, metricYear, maxPages, nextKey }) {
   const sourceId = journal.openalex_source_id
   if (!sourceId) {
     return { journal_code: journal.journal_code, openalex_source_id: null, error: 'no openalex_source_id' }
   }
 
-  const sourceResult = await fetchSource(sourceId, cacheDir)
-  const twoYearCountResult = await fetchCitableCount(sourceId, metricYear - 2, metricYear - 1, cacheDir)
-  const { works, totalCount: fiveYearCount, pages } = await fetchWorksPaged(sourceId, metricYear - 5, metricYear - 1, maxPages, cacheDir)
+  const sourceResult = await fetchSource(sourceId, cacheDir, nextKey)
 
-  const numeratorCapped = fiveYearCount != null && works.length < fiveYearCount
+  // 2-year PCI window: exhaustive, exact numerator for every journal.
+  const twoYear = await fetchWorksExhaustive(sourceId, metricYear - 2, metricYear - 1, cacheDir, nextKey)
+  const twoYearExact = twoYear.totalCount
+
+  // PCI-5's older tail (metric_year-5..metric_year-3): capped, secondary
+  // metric. Deliberately excludes metric_year-2/metric_year-1 — those
+  // works are already in `twoYear.works` above, so combining the two
+  // arrays gives the full 5-year set without double-fetching.
+  const olderTail = await fetchWorksPaged(sourceId, metricYear - 5, metricYear - 3, maxPages, cacheDir, nextKey)
+  const fiveYearExactResult = await fetchCitableCount(sourceId, metricYear - 5, metricYear - 1, cacheDir, nextKey)
+  const fiveYearExact = fiveYearExactResult.ok ? (fiveYearExactResult.data?.meta?.count ?? null) : null
+
+  const works = [...twoYear.works, ...olderTail.works]
+  const numeratorCapped = fiveYearExact != null && works.length < fiveYearExact
 
   return {
     journal_code: journal.journal_code,
     openalex_source_id: sourceId,
     source: sourceResult.ok ? sourceResult.data : null,
     source_status: sourceResult.status,
-    citable_items_2yr_exact: twoYearCountResult.ok ? (twoYearCountResult.data?.meta?.count ?? null) : null,
-    citable_items_5yr_exact: fiveYearCount,
+    citable_items_2yr_exact: twoYearExact,
+    two_year_works_fetched: twoYear.works.length,
+    two_year_hit_ceiling: twoYear.hitCeiling,
+    citable_items_5yr_exact: fiveYearExact,
     works_fetched: works.length,
     numerator_capped: numeratorCapped,
-    pages_fetched: pages,
+    pages_fetched: twoYear.pages + olderTail.pages,
     works,
   }
 }
@@ -238,6 +342,13 @@ async function main() {
   const maxPages = parseInt(arg('max-pages', '10'), 10)
   const concurrency = parseInt(arg('concurrency', '6'), 10)
   const limit = arg('limit') ? parseInt(arg('limit'), 10) : null
+  // Every available OPENALEX_API_KEY (see loadApiKeys()'s doc comment for
+  // why a single process.env read isn't enough for a multi-key .env),
+  // round-robinned per request so a multi-key run spreads its cost across
+  // all of them instead of draining one key's daily budget first. Never
+  // hardcoded, never written into any output/cache file.
+  const apiKeys = loadApiKeys()
+  const nextKey = makeKeyRotator(apiKeys)
 
   if (!inPath) {
     console.error('Usage: node scripts/fetch-pjr-source-data.mjs --in <corpus.json> --out <output.json> --metric-year 2025')
@@ -247,10 +358,11 @@ async function main() {
 
   let journals = JSON.parse(readFileSync(resolve(inPath), 'utf-8'))
   if (limit) journals = journals.slice(0, limit)
-  console.log(`Loaded ${journals.length} journals. metric_year=${metricYear}, PCI window ${metricYear - 2}-${metricYear - 1}, PCI-5 window ${metricYear - 5}-${metricYear - 1}. max_pages=${maxPages} concurrency=${concurrency}`)
+  console.log(`Loaded ${journals.length} journals. metric_year=${metricYear}, PCI window ${metricYear - 2}-${metricYear - 1}, PCI-5 window ${metricYear - 5}-${metricYear - 1}. max_pages=${maxPages} concurrency=${concurrency}. api_keys=${apiKeys.length}`)
+  if (apiKeys.length === 0) console.warn('WARNING: no OPENALEX_API_KEY found (.env or environment) — /works queries will fail without one.')
 
   const startTime = Date.now()
-  const results = await runWithConcurrency(journals, concurrency, j => processJournal(j, { cacheDir, metricYear, maxPages }))
+  const results = await runWithConcurrency(journals, concurrency, j => processJournal(j, { cacheDir, metricYear, maxPages, nextKey }))
   console.log(`Done in ${((Date.now() - startTime) / 1000).toFixed(1)}s`)
 
   const cappedCount = results.filter(r => r.numerator_capped).length
@@ -258,8 +370,29 @@ async function main() {
   console.log(`${cappedCount} journals hit the works-fetch page cap (numerator estimated from a partial fetch).`)
   console.log(`${errorCount} journals had a non-200 source lookup or other error.`)
 
-  writeFileSync(outPath, JSON.stringify({ metric_year: metricYear, generated_at: new Date().toISOString(), max_pages: maxPages, journals: results }, null, 2), 'utf-8')
-  console.log(`Wrote ${outPath}`)
+  // NDJSON, streamed one line at a time — not a single JSON.stringify()
+  // over the whole corpus, and not even a single joined string of all
+  // lines. BUG FIX (2026-08-15): a 993-journal run with several JACS-scale
+  // exhaustive 2-year fetches (thousands of works each, each with a
+  // counts_by_year array) produced a combined object whose pretty-printed
+  // (indent:2) JSON string exceeded V8's max string length (RangeError:
+  // Invalid string length), losing the entire run's output after a real
+  // ~74-minute, budget-spending fetch completed successfully. A plain
+  // `results.map(...).join('\n')` would still build one big string first
+  // and could hit the same ceiling on a large enough corpus — streaming
+  // each line individually to disk has no such ceiling regardless of how
+  // many journals or how large any single journal's works array is.
+  const metaPath = outPath.replace(/\.json$/, '') + '.meta.json'
+  writeFileSync(metaPath, JSON.stringify({ metric_year: metricYear, generated_at: new Date().toISOString(), max_pages: maxPages, journal_count: results.length }, null, 2), 'utf-8')
+  const ndjsonPath = outPath.replace(/\.json$/, '') + '.ndjson'
+  await new Promise((resolvePromise, rejectPromise) => {
+    const stream = createWriteStream(ndjsonPath, { encoding: 'utf-8' })
+    stream.on('error', rejectPromise)
+    stream.on('finish', resolvePromise)
+    for (const r of results) stream.write(JSON.stringify(r) + '\n')
+    stream.end()
+  })
+  console.log(`Wrote ${metaPath} and ${ndjsonPath}`)
 }
 
 main().catch(err => { console.error(err); process.exit(1) })

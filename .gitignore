@@ -5,3 +5,8 @@ migration-source.jsonl
 openalex-cache/
 openalex-enrichment*/
 showjcr-crosscheck-output/
+pjr-cache/
+pjr-source-data*.json
+.env
+.env.*
+!.env.example
