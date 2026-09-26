@@ -80,7 +80,7 @@ if (state.stage === 'harvest') {
   // budget); --limit test runs use the API harvester instead.
   const a = lim.length
     ? await run('scripts/global/harvest-openalex-journals.mjs', ['--out', oaFile, ...lim], { timeoutMs: remaining() })
-    : await run('scripts/global/harvest-openalex-snapshot.mjs', ['--out', oaFile], { timeoutMs: remaining() })
+    : await run('scripts/global/harvest-openalex-snapshot.mjs', ['--out', oaFile, '--profiles', join(work, 'openalex-profiles.jsonl')], { timeoutMs: remaining() })
   const b = a === 0 ? await run('scripts/global/harvest-crossref-journals.mjs', ['--out', crFile, ...lim], { timeoutMs: remaining() }) : 1
   if (a === 0 && b === 0) { state.stage = 'corpus'; step('harvest', 'complete') } else step('harvest', 'interrupted, will resume')
 }

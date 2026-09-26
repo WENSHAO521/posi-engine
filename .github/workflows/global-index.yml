@@ -7,7 +7,8 @@ name: Global index and rankings
 # directory. A new cycle starts every 30 days after the previous one finished.
 #
 # Results are published as releases of THIS repository (tag global-index-<cycle>):
-#   - global-corpus.json.gz as soon as the corpus exists (journal directory)
+#   - global-corpus.json.gz as soon as the corpus exists (journal directory),
+#     with openalex-profiles.jsonl.gz (journal profile pages)
 #   - the PCS-Q edition, summaries and PCS shards when the cycle completes
 # posi-data imports them on its own schedule, so no cross-repository token is
 # needed here.
@@ -85,7 +86,9 @@ jobs:
             echo "Release $TAG exists"
           else
             gzip -kf work/global-corpus.json
-            gh release create "$TAG" work/global-corpus.json.gz work/global-corpus.json.summary.json \
+            PROFILES=""
+            if [ -f work/openalex-profiles.jsonl ]; then gzip -kf work/openalex-profiles.jsonl; PROFILES=work/openalex-profiles.jsonl.gz; fi
+            gh release create "$TAG" work/global-corpus.json.gz work/global-corpus.json.summary.json $PROFILES \
               --title "Global index $CYCLE" \
               --notes "GLOBAL-INDEX-1.0 cycle $CYCLE. Journal corpus released; the PCS-Q edition is added when the cycle completes."
           fi
