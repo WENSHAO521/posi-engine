@@ -1,0 +1,116 @@
+name: Global index and rankings
+
+# Automated GLOBAL-INDEX-1.0 cycle (posi-data/GLOBAL-INDEX-1.0-SPEC.md):
+# harvest every Crossref and OpenAlex journal, compute PCS-1.0 for each, build
+# the PCS-Q ranking edition and publish it to posi-data. A full cycle takes
+# several daily runs; each run advances as far as its time budget allows and
+# resumes from the cached work directory next time. A new cycle starts every
+# 30 days after the previous edition was published.
+#
+# Required secrets:
+#   POSI_DATA_TOKEN   fine-grained token with contents:write on WENSHAO521/posi-data
+#                     (to commit the edition and create the release with bulk files)
+#   OPENALEX_API_KEY  free OpenAlex API key; keyless use is limited to a small
+#                     daily budget per IP, far below a full harvest
+
+on:
+  schedule:
+    - cron: '30 1 * * *'   # daily, 01:30 UTC
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Harvest limit per source (testing only; empty = everything)'
+        required: false
+        default: ''
+
+concurrency:
+  group: global-index
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check out posi-data
+        uses: actions/checkout@v4
+        with:
+          repository: WENSHAO521/posi-data
+          path: posi-data
+          token: ${{ secrets.POSI_DATA_TOKEN }}
+
+      - name: Restore work directory
+        uses: actions/cache/restore@v4
+        with:
+          path: work
+          key: global-index-${{ github.run_id }}
+          restore-keys: global-index-
+
+      - name: Advance the cycle
+        id: cycle
+        env:
+          POSI_MAILTO: posi@panorama-sg.com
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
+        run: |
+          node scripts/global/run-cycle.mjs \
+            --work work \
+            --curated posi-data/corpus/core-collection.json \
+            --curated posi-data/corpus/global-benchmark.json \
+            --budget-minutes 320 \
+            --concurrency 4 \
+            ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
+
+      - name: Publish the edition to posi-data
+        if: steps.cycle.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
+          CYCLE: ${{ steps.cycle.outputs.cycle }}
+        run: |
+          set -euo pipefail
+          ENGINE_SHA=$(git rev-parse HEAD)
+          AUDIT=posi-data/audits/global-index/global-index-$CYCLE
+          mkdir -p "$AUDIT" posi-data/rankings/pcs-q
+          cp work/pcs-q/pcs-q-*.json work/pcs-q/pcs-q-*.csv work/pcs-q/summary.json posi-data/rankings/pcs-q/
+          cp work/global-corpus.json.summary.json "$AUDIT/corpus-summary.json"
+          cp work/pcs/summary.json "$AUDIT/pcs-summary.json"
+          cp work/pcs-q/summary.json "$AUDIT/pcs-q-summary.json"
+          cp work/cycle.json "$AUDIT/cycle.json"
+          printf '# Global index cycle %s\n\nEngine commit: %s\n\nBulk files (global corpus, PCS shards) are attached to the posi-data release `global-index-%s`.\n' "$CYCLE" "$ENGINE_SHA" "$CYCLE" > "$AUDIT/README.md"
+
+          gzip -kf work/global-corpus.json
+          tar -czf work/pcs-shards.tar.gz -C work/pcs pcs
+          gh release create "global-index-$CYCLE" work/global-corpus.json.gz work/pcs-shards.tar.gz \
+            --repo WENSHAO521/posi-data --title "Global index $CYCLE" \
+            --notes "GLOBAL-INDEX-1.0 cycle $CYCLE, posi-engine $ENGINE_SHA." || \
+          gh release upload "global-index-$CYCLE" work/global-corpus.json.gz work/pcs-shards.tar.gz --clobber --repo WENSHAO521/posi-data
+
+          cd posi-data
+          git config user.name  "posi-engine-bot"
+          git config user.email "posi-engine-bot@users.noreply.github.com"
+          git add rankings/pcs-q "audits/global-index/global-index-$CYCLE"
+          if git diff --staged --quiet; then
+            echo "Edition unchanged"
+          else
+            git commit -m "data(pcs-q): global index cycle $CYCLE (posi-engine ${ENGINE_SHA:0:7})"
+            git push
+          fi
+
+      - name: Mark cycle published
+        if: steps.cycle.outputs.publish == 'true'
+        run: node scripts/global/run-cycle.mjs --work work --mark-published
+
+      - name: Save work directory
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: work
+          key: global-index-${{ github.run_id }}
