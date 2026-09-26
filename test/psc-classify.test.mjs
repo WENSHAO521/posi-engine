@@ -27,15 +27,16 @@ test('classifyPsc aggregates by mapped PSC category, not just the single top top
   assert.equal(result.psc_category, 'P5.04', 'the three aggregated P5.04 topics (12) outweigh the single P1.03 topic (10)')
 })
 
-test('classifyPsc flags low confidence when the winning category does not dominate', () => {
+test('classifyPsc flags a scattered full-sample journal as multidisciplinary (PSC-CROSSWALK-0.3)', () => {
   // 10 fields at equal weight, each mapping to a DISTINCT PSC code (Medicine
   // and Dentistry, for example, both map to P3.02 and would silently
   // aggregate — verified against FIELD_TO_PSC before picking these) -> each
-  // is 10% of the total, below the 15% concentration threshold.
+  // is 10% of the total, far below the 35% concentration threshold.
   const fields = ['Mathematics', 'Chemistry', 'Physics and Astronomy', 'Psychology', 'Computer Science', 'Materials Science', 'Veterinary Science', 'Chemical Engineering', 'Business, Management and Accounting', 'Energy']
   const topics = fields.map(f => ({ count: 3, field: { display_name: f } }))
   const result = classifyPsc(topics, 200)
-  assert.equal(result.psc_confidence, 'low', 'no category reaches the 15% concentration threshold across 10 equal-weight, distinct-PSC topics')
+  assert.equal(result.psc_confidence, 'multidisciplinary', 'no category or domain dominates across 10 equal-weight, distinct-PSC topics')
+  assert.equal(isRankEligiblePscConfidence(result.psc_confidence), false)
 })
 
 test('classifyPsc downgrades (not "low", "medium") a small-but-not-tiny journal with a genuinely dominant share (regression: GRHAS)', () => {
@@ -71,16 +72,44 @@ test('classifyPsc stays low (not medium) when the sample is too thin even for th
   assert.equal(result.psc_confidence, 'low')
 })
 
-test('classifyPsc stays low, not medium, for a large sample with no real concentration (generalist mega-journal shape)', () => {
+test('classifyPsc never reports medium for a large sample with no real concentration (generalist mega-journal shape)', () => {
   // A big, well-sampled journal whose topics are genuinely scattered (10
-  // distinct PSC categories at an even ~10% share each — below the 15%
-  // concentration bar) must stay `low`, never `medium` — lack of real
-  // concentration is disqualifying on its own regardless of sample size.
+  // distinct PSC categories at an even ~10% share each) is a general
+  // journal: `multidisciplinary`, never `medium` or `high`.
   // See PSC-CROSSWALK.md § 4's Nature/Science/The Lancet discussion.
   const fields = ['Mathematics', 'Chemistry', 'Physics and Astronomy', 'Psychology', 'Computer Science', 'Materials Science', 'Veterinary Science', 'Chemical Engineering', 'Business, Management and Accounting', 'Energy']
   const topics = fields.map(f => ({ count: 3, field: { display_name: f } }))
   const result = classifyPsc(topics, 5000)
-  assert.equal(result.psc_confidence, 'low')
+  assert.equal(result.psc_confidence, 'multidisciplinary')
+})
+
+test('classifyPsc: a 20% winner with a near-tie runner-up is no longer high (regression: The Lancet)', () => {
+  // The Lancet's OpenAlex topics are led by noise (an acoustics topic mapped
+  // to P2.03, a catch-all economics topic to P5.02). Under PSC-CROSSWALK-0.2
+  // a 0.15 share was enough for `high`, filing The Lancet under Business.
+  const topics = [
+    { count: 20, field: { display_name: 'Economics, Econometrics and Finance' } },
+    { count: 17, field: { display_name: 'Engineering' }, subfield: { display_name: 'Aerospace Engineering' } },
+    { count: 16, field: { display_name: 'Medicine' } },
+    { count: 15, field: { display_name: 'Social Sciences' }, subfield: { display_name: 'History' } },
+    { count: 14, field: { display_name: 'Psychology' } },
+    { count: 18, field: { display_name: 'Mathematics' } },
+  ]
+  const result = classifyPsc(topics, 400000)
+  assert.equal(result.psc_confidence, 'multidisciplinary')
+})
+
+test('classifyPsc stays low when one domain dominates but no single category leads clearly', () => {
+  // 32% P1.03 vs 28% P1.04 (lead 1.14) inside a 100% physical-sciences
+  // domain: not concentrated enough for `high`, not general enough for
+  // `multidisciplinary`.
+  const topics = [
+    { count: 32, field: { display_name: 'Physics and Astronomy' } },
+    { count: 28, field: { display_name: 'Chemistry' } },
+    { count: 22, field: { display_name: 'Mathematics' } },
+    { count: 18, field: { display_name: 'Computer Science' } },
+  ]
+  assert.equal(classifyPsc(topics, 1000).psc_confidence, 'low')
 })
 
 test('classifyPsc marks the same distribution high-confidence once works_count clears the threshold', () => {

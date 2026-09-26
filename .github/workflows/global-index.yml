@@ -12,8 +12,8 @@ name: Global index and rankings
 # posi-data imports them on its own schedule, so no cross-repository token is
 # needed here.
 #
-# Required secret: OPENALEX_API_KEY (keyless OpenAlex use is limited to a small
-# daily budget per IP, far below a full harvest).
+# OpenAlex journals come from the public OpenAlex snapshot (no API budget).
+# OPENALEX_API_KEY is used for the per-journal PCS work lookups.
 
 on:
   schedule:
