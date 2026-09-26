@@ -52,11 +52,23 @@
  * an explicit, named state rather than a null sentinel.
  */
 
-export const PSC_CROSSWALK_VERSION = 'PSC-CROSSWALK-0.2'
+export const PSC_CROSSWALK_VERSION = 'PSC-CROSSWALK-0.3'
 
 /** Below this share of total topic-count mass, the winning PSC category
  * doesn't dominate clearly enough to trust at the `high` tier. */
-export const CONFIDENCE_SHARE_THRESHOLD = 0.15
+export const CONFIDENCE_SHARE_THRESHOLD = 0.35
+/** PSC-CROSSWALK-0.3: the winning category must also lead the runner-up by
+ * this factor. Old general journals carry long tails of noisy OpenAlex
+ * topics (The Lancet's top topic is an acoustics topic); a 0.15 share with a
+ * near-tie runner-up classified them confidently into the wrong category. */
+export const LEAD_RATIO_THRESHOLD = 1.5
+/** Share of the winning PSC domain (P1..P6) below which a journal with no
+ * concentrated category is labelled `multidisciplinary`. */
+export const DOMAIN_SHARE_THRESHOLD = 0.5
+/** A full-sample journal whose best category holds under this share, with
+ * no clear lead, is also `multidisciplinary` even inside one domain
+ * (Nature: 27% physics, 1.3x lead, 53% physical sciences). */
+export const MULTI_SHARE_CEILING = 0.3
 /** Below this many OpenAlex-indexed works, even a dominant share is
  * unreliable at the `high` tier — see PSC-CROSSWALK.md § 3 for the real
  * misclassification (a 41-work journal, confidently but wrongly
@@ -165,7 +177,7 @@ export function mapToPsc(field, subfield) {
  * @param {{ count: number, field?: { display_name: string }, subfield?: { display_name: string } }[]} topics
  *   - a source's `topics` array from OpenAlex (GET /sources/issn:{issn}), unmodified
  * @param {number} worksCount - the source's works_count from the same OpenAlex record
- * @returns {{ psc_category: string|null, psc_confidence: 'high'|'medium'|'low'|'unclassified' }}
+ * @returns {{ psc_category: string|null, psc_confidence: 'high'|'medium'|'low'|'multidisciplinary'|'unclassified' }}
  */
 export function classifyPsc(topics, worksCount) {
   if (!topics || topics.length === 0) return { psc_category: null, psc_confidence: 'unclassified' }
@@ -184,18 +196,33 @@ export function classifyPsc(topics, worksCount) {
   }
   if (byPsc.size === 0) return { psc_category: null, psc_confidence: 'unclassified' }
 
-  const [winningPsc, winningCount] = [...byPsc.entries()].sort((a, b) => b[1] - a[1])[0]
+  const ranked = [...byPsc.entries()].sort((a, b) => b[1] - a[1])
+  const [winningPsc, winningCount] = ranked[0]
+  const runnerUp = ranked[1]?.[1] ?? 0
   const share = winningCount / total
+  const lead = runnerUp ? winningCount / runnerUp : Infinity
+  const byDomain = new Map()
+  for (const [psc, n] of byPsc) {
+    const domain = psc.split('.')[0]
+    byDomain.set(domain, (byDomain.get(domain) ?? 0) + n)
+  }
+  const domainShare = Math.max(...byDomain.values()) / total
   const works = worksCount ?? 0
-  const shareMeetsHighBar = share >= CONFIDENCE_SHARE_THRESHOLD
+  const concentrated = share >= CONFIDENCE_SHARE_THRESHOLD && lead >= LEAD_RATIO_THRESHOLD
 
   let confidence
-  if (shareMeetsHighBar && works >= MIN_WORKS_COUNT) {
+  if (concentrated && works >= MIN_WORKS_COUNT) {
     confidence = 'high'
-  } else if (shareMeetsHighBar && works >= MEDIUM_MIN_WORKS_COUNT) {
+  } else if (concentrated && works >= MEDIUM_MIN_WORKS_COUNT) {
     // Concentration gate fully met, sample thinner than the `high` bar —
     // see module header for why this is `medium`, not `low`.
     confidence = 'medium'
+  } else if (!concentrated && works >= MIN_WORKS_COUNT &&
+    (domainShare < DOMAIN_SHARE_THRESHOLD || (share < MULTI_SHARE_CEILING && lead < LEAD_RATIO_THRESHOLD))) {
+    // PSC-CROSSWALK-0.3: neither a category nor a domain dominates on a full
+    // sample, the shape of a general journal (Science, Nature, The Lancet).
+    // Displayed as Multidisciplinary, never ranked in a subject category.
+    confidence = 'multidisciplinary'
   } else {
     confidence = 'low'
   }

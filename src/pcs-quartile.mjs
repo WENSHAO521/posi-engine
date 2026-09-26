@@ -57,7 +57,8 @@ export function rankPcsTrack(entries, { metric_year }) {
       metric_year,
       pcs: e.pcs ?? null,
       pcs_eligible_items: e.pcs_eligible_items ?? null,
-      category_code: e.psc_category ?? null,
+      // PSC-CROSSWALK-0.3: a general journal has no subject category of record.
+      category_code: e.psc_confidence === 'multidisciplinary' ? null : e.psc_category ?? null,
       rank: null, rank_mid: null, category_size: null, percentile: null, quartile: null, quartile_label: null,
       overall_rank: null, overall_size: null, overall_percentile: null, overall_quartile: null,
       ranking_method: 'unavailable',
@@ -83,6 +84,7 @@ export function rankPcsTrack(entries, { metric_year }) {
   const byCategory = new Map()
   for (const e of eligible) {
     const rec = out.get(e.journal_id)
+    if (e.psc_confidence === 'multidisciplinary') { rec.exclusion_reason = 'multidisciplinary'; continue }
     if (!e.psc_category) { rec.exclusion_reason = 'no_psc_category'; continue }
     if (!isRankEligiblePscConfidence(e.psc_confidence)) { rec.exclusion_reason = 'psc_confidence_not_rank_eligible'; continue }
     byCategory.set(e.psc_category, [...(byCategory.get(e.psc_category) ?? []), e])

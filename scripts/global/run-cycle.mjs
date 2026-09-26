@@ -5,7 +5,7 @@
  * One call advances the current cycle as far as the time budget allows and
  * records where it stopped, so a scheduled job can call it repeatedly:
  *
- *   harvest  -> OpenAlex + Crossref journal lists (resumable cursors)
+ *   harvest  -> OpenAlex journals (public snapshot) + Crossref journal list (resumable cursor)
  *   corpus   -> merged global corpus
  *   pcs      -> PCS-1.0 for every journal (run-pcs-etl.mjs, resumable)
  *   rank     -> PCS-Q edition (run-pcs-q.mjs)
@@ -76,7 +76,11 @@ const rankDir = join(work, 'pcs-q')
 const lim = limit ? ['--limit', limit] : []
 
 if (state.stage === 'harvest') {
-  const a = await run('scripts/global/harvest-openalex-journals.mjs', ['--out', oaFile, ...lim], { timeoutMs: remaining() })
+  // The full OpenAlex sources table comes from the public snapshot (no API
+  // budget); --limit test runs use the API harvester instead.
+  const a = lim.length
+    ? await run('scripts/global/harvest-openalex-journals.mjs', ['--out', oaFile, ...lim], { timeoutMs: remaining() })
+    : await run('scripts/global/harvest-openalex-snapshot.mjs', ['--out', oaFile, '--profiles', join(work, 'openalex-profiles.jsonl')], { timeoutMs: remaining() })
   const b = a === 0 ? await run('scripts/global/harvest-crossref-journals.mjs', ['--out', crFile, ...lim], { timeoutMs: remaining() }) : 1
   if (a === 0 && b === 0) { state.stage = 'corpus'; step('harvest', 'complete') } else step('harvest', 'interrupted, will resume')
 }
@@ -106,3 +110,5 @@ log(`stage: ${state.stage}${state.pcs_progress ? ` (pcs ${state.pcs_progress.don
 output('stage', state.stage)
 output('cycle', state.cycle_id)
 output('publish', state.stage === 'ready' ? 'true' : 'false')
+// The corpus alone is enough for the journal directory; publish it as soon as it exists.
+output('corpus_ready', existsSync(corpusFile) ? 'true' : 'false')
