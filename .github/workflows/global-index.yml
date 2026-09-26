@@ -7,9 +7,11 @@ name: Global index and rankings
 # resumes from the cached work directory next time. A new cycle starts every
 # 30 days after the previous edition was published.
 #
-# Required secret: POSI_DATA_TOKEN, a fine-grained token with contents:write
-# on WENSHAO521/posi-data (to commit the edition and create the release that
-# holds the bulk files).
+# Required secrets:
+#   POSI_DATA_TOKEN   fine-grained token with contents:write on WENSHAO521/posi-data
+#                     (to commit the edition and create the release with bulk files)
+#   OPENALEX_API_KEY  free OpenAlex API key; keyless use is limited to a small
+#                     daily budget per IP, far below a full harvest
 
 on:
   schedule:
@@ -57,6 +59,7 @@ jobs:
         id: cycle
         env:
           POSI_MAILTO: posi@panorama-sg.com
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
         run: |
           node scripts/global/run-cycle.mjs \
             --work work \

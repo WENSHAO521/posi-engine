@@ -56,8 +56,12 @@ test('curated records keep their POSI-J id and are not duplicated', () => {
   assert.equal(out[0].curated, true)
 })
 
-test('records without any ISSN are dropped', () => {
+test('OpenAlex journals without an ISSN are not indexed', () => {
   assert.equal(buildGlobalCorpus([fromOpenAlexSource(oaSource({ issn_l: null, issn: [] }))], []).length, 0)
+})
+
+test('Crossref journals without an ISSN are left out', () => {
+  assert.equal(buildGlobalCorpus([], [fromCrossrefJournal({ title: 'No ISSN', publisher: 'P' })]).length, 0)
 })
 
 test('the ISSN-L is the ISSN the PCS ETL queries', () => {

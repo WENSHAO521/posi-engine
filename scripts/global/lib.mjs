@@ -5,6 +5,15 @@ import { dirname } from 'path'
 
 export const MAILTO = process.env.POSI_MAILTO || 'posi@panorama-sg.com'
 
+// OpenAlex requires an API key beyond a small free daily budget per IP
+// (about 1,000 requests). Set OPENALEX_API_KEY for harvesting; it is added to
+// every api.openalex.org request made through getJson().
+const OPENALEX_API_KEY = process.env.OPENALEX_API_KEY || ''
+function withKey(url) {
+  if (!OPENALEX_API_KEY || !url.startsWith('https://api.openalex.org/')) return url
+  return `${url}${url.includes('?') ? '&' : '?'}api_key=${encodeURIComponent(OPENALEX_API_KEY)}`
+}
+
 export function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
   return i !== -1 ? process.argv[i + 1] : fallback
@@ -17,8 +26,14 @@ export async function getJson(url, { maxAttempts = 6, timeoutMs = 30000 } = {}) 
   let lastErr
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: { 'User-Agent': `POSI-global-index (mailto:${MAILTO})` } })
+      const res = await fetch(withKey(url), { signal: AbortSignal.timeout(timeoutMs), headers: { 'User-Agent': `POSI-global-index (mailto:${MAILTO})` } })
       if (res.ok) return await res.json()
+      if (res.status === 429 && url.startsWith('https://api.openalex.org/')) {
+        const body = await res.json().catch(() => ({}))
+        if (body.dailyRemainingUsd === 0 || /budget/i.test(body.message ?? '')) {
+          throw Object.assign(new Error(`OpenAlex daily budget exhausted${OPENALEX_API_KEY ? '' : ' (set OPENALEX_API_KEY)'}; resets in ${body.retryAfter ?? '?'}s. Progress is saved; re-run to resume.`), { fatal: true })
+        }
+      }
       if (res.status !== 429 && res.status < 500) throw Object.assign(new Error(`HTTP ${res.status} for ${url}`), { fatal: true })
       lastErr = new Error(`HTTP ${res.status}`)
     } catch (e) {

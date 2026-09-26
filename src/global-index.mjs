@@ -8,6 +8,10 @@
  *   - a journal with a curated record keeps its POSI-J id
  *   - otherwise it is keyed `ISSNL-<issn-l>` (OpenAlex ISSN-L, else the
  *     first Crossref ISSN); POSI-J ids are never minted here
+ *   - an ISSN is required for indexing (as in the major citation databases):
+ *     OpenAlex "journals" without one are mostly conference and meeting
+ *     collections, and Crossref entries without one have no identifier to
+ *     merge on; both are left out
  */
 import { classifyPsc } from './psc-classify.mjs'
 
@@ -37,6 +41,8 @@ export function fromOpenAlexSource(src) {
     works_count: src.works_count ?? 0,
     psc_category,
     psc_confidence,
+    // Top topic fields, kept so every classification can be audited.
+    topic_fields: (src.topics ?? []).slice(0, 3).map(t => [t.field?.display_name ?? null, t.subfield?.display_name ?? null, t.count ?? 0]),
   }
 }
 
