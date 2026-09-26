@@ -2,16 +2,18 @@ name: Global index and rankings
 
 # Automated GLOBAL-INDEX-1.0 cycle (posi-data/GLOBAL-INDEX-1.0-SPEC.md):
 # harvest every Crossref and OpenAlex journal, compute PCS-1.0 for each, build
-# the PCS-Q ranking edition and publish it to posi-data. A full cycle takes
-# several daily runs; each run advances as far as its time budget allows and
-# resumes from the cached work directory next time. A new cycle starts every
-# 30 days after the previous edition was published.
+# the PCS-Q ranking edition. A full cycle takes several daily runs; each run
+# advances as far as its time budget allows and resumes from the cached work
+# directory. A new cycle starts every 30 days after the previous one finished.
 #
-# Required secrets:
-#   POSI_DATA_TOKEN   fine-grained token with contents:write on WENSHAO521/posi-data
-#                     (to commit the edition and create the release with bulk files)
-#   OPENALEX_API_KEY  free OpenAlex API key; keyless use is limited to a small
-#                     daily budget per IP, far below a full harvest
+# Results are published as releases of THIS repository (tag global-index-<cycle>):
+#   - global-corpus.json.gz as soon as the corpus exists (journal directory)
+#   - the PCS-Q edition, summaries and PCS shards when the cycle completes
+# posi-data imports them on its own schedule, so no cross-repository token is
+# needed here.
+#
+# Required secret: OPENALEX_API_KEY (keyless OpenAlex use is limited to a small
+# daily budget per IP, far below a full harvest).
 
 on:
   schedule:
@@ -28,12 +30,14 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write   # releases on this repository
 
 jobs:
   cycle:
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
@@ -41,12 +45,11 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Check out posi-data
+      - name: Check out posi-data (read only, for curated records)
         uses: actions/checkout@v4
         with:
           repository: WENSHAO521/posi-data
           path: posi-data
-          token: ${{ secrets.POSI_DATA_TOKEN }}
 
       - name: Restore work directory
         uses: actions/cache/restore@v4
@@ -71,54 +74,37 @@ jobs:
 
       # The journal directory only needs the corpus, so it is released as soon
       # as the corpus exists (PCS for every journal takes several more runs).
-      - name: Publish the journal corpus early
-        if: steps.cycle.outputs.corpus_ready == 'true' && steps.cycle.outputs.publish != 'true'
+      - name: Release the journal corpus
+        if: steps.cycle.outputs.corpus_ready == 'true'
         env:
-          GH_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
           CYCLE: ${{ steps.cycle.outputs.cycle }}
         run: |
           set -euo pipefail
-          if gh release view "global-index-$CYCLE" --repo WENSHAO521/posi-data >/dev/null 2>&1; then
-            echo "Release global-index-$CYCLE already exists"
+          TAG="global-index-$CYCLE"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists"
           else
             gzip -kf work/global-corpus.json
-            gh release create "global-index-$CYCLE" work/global-corpus.json.gz               --repo WENSHAO521/posi-data --title "Global index $CYCLE"               --notes "GLOBAL-INDEX-1.0 cycle $CYCLE: journal corpus. PCS and PCS-Q follow when the cycle completes."
+            gh release create "$TAG" work/global-corpus.json.gz work/global-corpus.json.summary.json \
+              --title "Global index $CYCLE" \
+              --notes "GLOBAL-INDEX-1.0 cycle $CYCLE. Journal corpus released; the PCS-Q edition is added when the cycle completes."
           fi
 
-      - name: Publish the edition to posi-data
+      - name: Release the ranking edition
         if: steps.cycle.outputs.publish == 'true'
         env:
-          GH_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
           CYCLE: ${{ steps.cycle.outputs.cycle }}
         run: |
           set -euo pipefail
-          ENGINE_SHA=$(git rev-parse HEAD)
-          AUDIT=posi-data/audits/global-index/global-index-$CYCLE
-          mkdir -p "$AUDIT" posi-data/rankings/pcs-q
-          cp work/pcs-q/pcs-q-*.json work/pcs-q/pcs-q-*.csv work/pcs-q/summary.json posi-data/rankings/pcs-q/
-          cp work/global-corpus.json.summary.json "$AUDIT/corpus-summary.json"
-          cp work/pcs/summary.json "$AUDIT/pcs-summary.json"
-          cp work/pcs-q/summary.json "$AUDIT/pcs-q-summary.json"
-          cp work/cycle.json "$AUDIT/cycle.json"
-          printf '# Global index cycle %s\n\nEngine commit: %s\n\nBulk files (global corpus, PCS shards) are attached to the posi-data release `global-index-%s`.\n' "$CYCLE" "$ENGINE_SHA" "$CYCLE" > "$AUDIT/README.md"
-
-          gzip -kf work/global-corpus.json
-          tar -czf work/pcs-shards.tar.gz -C work/pcs pcs
-          gh release create "global-index-$CYCLE" work/global-corpus.json.gz work/pcs-shards.tar.gz \
-            --repo WENSHAO521/posi-data --title "Global index $CYCLE" \
-            --notes "GLOBAL-INDEX-1.0 cycle $CYCLE, posi-engine $ENGINE_SHA." || \
-          gh release upload "global-index-$CYCLE" work/global-corpus.json.gz work/pcs-shards.tar.gz --clobber --repo WENSHAO521/posi-data
-
-          cd posi-data
-          git config user.name  "posi-engine-bot"
-          git config user.email "posi-engine-bot@users.noreply.github.com"
-          git add rankings/pcs-q "audits/global-index/global-index-$CYCLE"
-          if git diff --staged --quiet; then
-            echo "Edition unchanged"
-          else
-            git commit -m "data(pcs-q): global index cycle $CYCLE (posi-engine ${ENGINE_SHA:0:7})"
-            git push
-          fi
+          TAG="global-index-$CYCLE"
+          mkdir -p out
+          cp work/pcs-q/pcs-q-*.json work/pcs-q/pcs-q-*.csv out/
+          cp work/pcs-q/summary.json out/pcs-q-summary.json
+          cp work/pcs/summary.json out/pcs-summary.json
+          cp work/cycle.json out/cycle.json
+          tar -czf out/pcs-shards.tar.gz -C work/pcs pcs
+          gh release upload "$TAG" out/* --clobber
+          gh release edit "$TAG" --notes "GLOBAL-INDEX-1.0 cycle $CYCLE, posi-engine $(git rev-parse HEAD). Complete: journal corpus and PCS-Q edition."
 
       - name: Mark cycle published
         if: steps.cycle.outputs.publish == 'true'
