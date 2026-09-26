@@ -185,3 +185,23 @@ consumes.
 [MIT](./LICENSE) for the code in this repository. The data it operates on
 and produces is licensed separately — see
 [posi-data](https://github.com/WENSHAO521/posi-data)'s LICENSE-DATA.
+
+## PCS-Q rankings and the global index
+
+Implements posi-data's `PCS-Q-1.0-SPEC.md` and `GLOBAL-INDEX-1.0-SPEC.md`.
+
+- `src/pcs-quartile.mjs` - the PCS-Q track: RANK-1.0 (`percentileMidrank`) on PCS, eligibility rules and `PCS-Q1..4` labels.
+- `scripts/run-pcs-q.mjs` - builds a PCS-Q edition from PCS records (`--pcs` file or `--pcs-dir` ETL output) and corpus files carrying PSC classifications.
+- `src/global-index.mjs` - pure merge of OpenAlex sources and Crossref journals on ISSN, curated POSI-J ids preserved, `ISSNL-<issn>` keys otherwise.
+- `scripts/global/` - resumable harvesters and corpus builder.
+
+Full run (resumable at every step):
+
+```bash
+node scripts/global/harvest-openalex-journals.mjs --out work/openalex-journals.jsonl
+node scripts/global/harvest-crossref-journals.mjs --out work/crossref-journals.jsonl
+node scripts/global/build-global-corpus.mjs --openalex work/openalex-journals.jsonl --crossref work/crossref-journals.jsonl \
+  --curated ../posi-data/corpus/core-collection.json --curated ../posi-data/corpus/global-benchmark.json --out work/global-corpus.json
+node scripts/run-pcs-etl.mjs --corpus work/global-corpus.json --out work/pcs --concurrency 4
+node scripts/run-pcs-q.mjs --pcs-dir work/pcs --corpus work/global-corpus.json --out work/pcs-q
+```

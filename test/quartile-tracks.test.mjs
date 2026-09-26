@@ -39,8 +39,8 @@ test('quartileLabel: never a bare Q1 — always the full track name', () => {
   assert.equal(quartileLabel('early_stage', null), null)
 })
 
-test('TRACK_LABELS covers all three tracks', () => {
-  assert.deepEqual(TRACK_LABELS, { early_stage: 'E-Q', mature: 'M-Q', citation: 'Citation Q' })
+test('TRACK_LABELS covers all four tracks (PCS-Q added by PCS-Q-1.0)', () => {
+  assert.deepEqual(TRACK_LABELS, { early_stage: 'E-Q', mature: 'M-Q', citation: 'Citation Q', pcs: 'PCS-Q' })
 })
 
 test('rankTrackCohort: a mature-lifecycle cohort scored by AJR-M produces M-Q labels, not Q labels', () => {

@@ -31,6 +31,9 @@ export const TRACK_LABELS = {
   early_stage: 'E-Q',
   mature: 'M-Q',
   citation: 'Citation Q',
+  // PCS-Q (posi-data/PCS-Q-1.0-SPEC.md, src/pcs-quartile.mjs): same
+  // algorithm, PCS as input, open to every indexed journal.
+  pcs: 'PCS-Q',
 }
 
 /**
@@ -90,7 +93,7 @@ function toQuartile(percentile) {
 
 /**
  * Builds the display label per the "never bare Q1" rule.
- * @param {'early_stage'|'mature'|'citation'} track
+ * @param {'early_stage'|'mature'|'citation'|'pcs'} track
  * @param {'Q1'|'Q2'|'Q3'|'Q4'|null} quartile
  * @returns {string|null} e.g. "E-Q1", "M-Q3", "Citation Q2", or null
  */
