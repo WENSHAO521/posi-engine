@@ -76,8 +76,10 @@ if (years.length > 1 && !arg('metric-year')) {
   process.exit(1)
 }
 
-// PSC classification per journal.
+// PSC classification and identity per journal (identity is carried into the
+// edition so registry-only journals can be named without a second lookup).
 const psc = new Map()
+const identity = new Map()
 for (const p of corpusPaths) {
   for (const j of readJson(p)) {
     const id = j.posi_id ?? j.journal_id ?? j.id
@@ -85,6 +87,12 @@ for (const p of corpusPaths) {
     psc.set(id, {
       psc_category: j.psc_category ?? j.citation_preview?.psc_category ?? j.s ?? null,
       psc_confidence: j.psc_confidence ?? j.citation_preview?.psc_confidence ?? j.sc ?? null,
+    })
+    identity.set(id, {
+      title: j.title ?? j.t ?? null,
+      publisher: j.publisher ?? j.p ?? null,
+      issn: [...new Set([...(j.issns ?? []), j.issn_online, j.issn_print, ...(j.i ?? [])].filter(Boolean))],
+      open_access: j.open_access ?? null,
     })
   }
 }
@@ -102,6 +110,7 @@ const entries = [...pcsById.values()]
   .sort((a, b) => a.journal_id.localeCompare(b.journal_id))
 
 const records = rankPcsTrack(entries, { metric_year: metricYear })
+  .map(r => ({ ...r, ...(identity.get(r.journal_id) ?? { title: null, publisher: null, issn: [], open_access: null }) }))
 
 if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true })
 const edition = {
@@ -117,7 +126,7 @@ const edition = {
 }
 writeFileSync(join(outDir, `pcs-q-${metricYear}.json`), JSON.stringify(edition) + '\n')
 
-const cols = ['journal_id', 'category_code', 'pcs', 'pcs_eligible_items', 'rank', 'rank_mid', 'category_size', 'percentile', 'quartile_label', 'overall_rank', 'overall_size', 'overall_percentile', 'ranking_method', 'exclusion_reason']
+const cols = ['journal_id', 'title', 'publisher', 'category_code', 'pcs', 'pcs_eligible_items', 'rank', 'rank_mid', 'category_size', 'percentile', 'quartile_label', 'overall_rank', 'overall_size', 'overall_percentile', 'ranking_method', 'exclusion_reason']
 const cell = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
 writeFileSync(join(outDir, `pcs-q-${metricYear}.csv`), [cols.join(','), ...records.map(r => cols.map(c => cell(r[c])).join(','))].join('\n') + '\n')
 

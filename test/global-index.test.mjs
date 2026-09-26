@@ -59,3 +59,10 @@ test('curated records keep their POSI-J id and are not duplicated', () => {
 test('records without any ISSN are dropped', () => {
   assert.equal(buildGlobalCorpus([fromOpenAlexSource(oaSource({ issn_l: null, issn: [] }))], []).length, 0)
 })
+
+test('the ISSN-L is the ISSN the PCS ETL queries', () => {
+  const src = fromOpenAlexSource(oaSource({ issn_l: '0140-6736', issn: ['0099-5355', '1474-547X', '0140-6736'] }))
+  const [rec] = buildGlobalCorpus([src], [])
+  assert.equal(rec.issn_online, '0140-6736')
+  assert.equal(rec.issns[0], '0140-6736')
+})

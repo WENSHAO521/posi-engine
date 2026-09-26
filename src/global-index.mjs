@@ -100,14 +100,17 @@ export function buildGlobalCorpus(openalex, crossref, curated = []) {
     const key = curatedId ?? `ISSNL-${r.issn_l ?? r.issns[0]}`
     if (seen.has(key)) continue // two harvested records resolving to one curated journal
     seen.add(key)
+    const ordered = r.issn_l ? [r.issn_l, ...r.issns.filter(i => i !== r.issn_l)] : r.issns
     out.push({
       posi_id: key,
       curated: !!curatedId,
       title: r.title,
       publisher: r.publisher,
-      issn_online: r.issns[0] ?? null,
-      issn_print: r.issns[1] ?? null,
-      issns: r.issns,
+      // The ETL queries issn_online first: put the ISSN-L there, since a
+      // journal's secondary ISSNs often have few or no DOIs registered.
+      issn_online: ordered[0] ?? null,
+      issn_print: ordered[1] ?? null,
+      issns: ordered,
       issn_l: r.issn_l,
       openalex_source_id: r.openalex_source_id,
       country: r.country,
