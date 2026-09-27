@@ -43,6 +43,10 @@ on:
         description: 'Harvest limit per source (testing only; empty = everything)'
         required: false
         default: ''
+      recheck_issns:
+        description: 'Reopen the current cycle and recheck journals with several ISSNs (after an ISSN-choice fix)'
+        type: boolean
+        default: false
       force_release:
         description: 'Release the edition even if its quality check fails (after reviewing the report)'
         type: boolean
@@ -103,6 +107,7 @@ jobs:
             --budget-minutes 320 \
             --cycle-days 20 \
             --no-pcs-fetch \
+            ${{ inputs.recheck_issns && '--reopen-pcs' || '' }} \
             ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
 
       # The journal directory only needs the corpus, so it is released as soon
@@ -192,6 +197,7 @@ jobs:
             --shard ${{ matrix.shard }}/$SHARDS \
             --concurrency 4 \
             --budget-minutes 310 \
+            ${{ inputs.recheck_issns && '--recheck-issns' || '' }} \
             ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
 
       # Only what this shard wrote: finished journals and mid-journal checkpoints.

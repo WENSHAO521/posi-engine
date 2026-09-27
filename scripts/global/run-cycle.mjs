@@ -15,6 +15,7 @@
  *   node scripts/global/run-cycle.mjs --work work --curated <core.json> --curated <benchmark.json> \
  *     [--budget-minutes 330] [--cycle-days 30] [--concurrency 4] [--limit N] [--no-pcs-fetch]
  *
+ * --reopen-pcs: take a built or published cycle back to the pcs stage.
  * --no-pcs-fetch: in the pcs stage, only count the journals already done
  * and advance when all are. The workflow uses it when PCS runs as parallel
  * shards (run-pcs-etl.mjs --shard i/N) whose results it merges into <work>/pcs.
@@ -36,6 +37,7 @@ const cycleDays = Number(arg('cycle-days', 30))
 const concurrency = arg('concurrency', '4')
 const limit = arg('limit')
 const noPcsFetch = flag('no-pcs-fetch')
+const reopenPcs = flag('reopen-pcs')
 const deadline = Date.now() + budgetMs
 const engineDir = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -71,6 +73,17 @@ function run(script, args, { timeoutMs } = {}) {
   })
 }
 const remaining = () => deadline - Date.now()
+
+// --reopen-pcs: take a built or published cycle back to the pcs stage (after
+// a PCS fix, with run-pcs-etl.mjs --recheck-issns); it is re-ranked and
+// re-released once every journal is done again.
+if (reopenPcs && ['rank', 'ready', 'published'].includes(state.stage)) {
+  state.stage = 'pcs'
+  delete state.published_at
+  state.history.push({ at: new Date().toISOString(), stage: 'pcs', note: 'reopened for a PCS recheck' })
+  save()
+  log('reopened at the pcs stage')
+}
 const step = (stage, note) => { state.history.push({ at: new Date().toISOString(), stage, note }); save() }
 
 const oaFile = join(work, 'openalex-journals.jsonl')
@@ -108,7 +121,8 @@ if (state.stage === 'pcs' && remaining() > 60_000) {
   let done = 0
   for (const id of ids) if (files.has(`${id}.json`)) done++
   state.pcs_progress = { done, total }
-  if (done >= total) { state.stage = 'rank'; step('pcs', `complete ${done}/${total}`) } else step('pcs', `progress ${done}/${total}`)
+  // A cycle reopened in this call stays at pcs until the recheck has run.
+  if (done >= total && !reopenPcs) { state.stage = 'rank'; step('pcs', `complete ${done}/${total}`) } else step('pcs', `progress ${done}/${total}`)
 }
 
 if (state.stage === 'rank') {
