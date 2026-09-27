@@ -104,12 +104,20 @@ function journalIssns(journal) {
   return [...new Set([journal.issn_online, journal.issn_print, ...(journal.issns ?? [])].filter(Boolean))]
 }
 
+/** Outcomes of the count requests, printed with the summary (a failed count is otherwise silent). */
+const countStats = { ok: 0, not_found: 0, failed: {} }
+
 /** How many works Crossref has under an ISSN in the window (one light request). */
 async function windowCount(issn, { startYear, endYear, mailto }) {
   const page = await fetchCrossrefWorksPage(issn, {
     rows: 0, filter: `from-pub-date:${startYear}-01-01,until-pub-date:${endYear}-12-31`, selectFields: PCS_SELECT_FIELDS, mailto,
   })
-  return page.status === 200 ? (page.totalResults ?? 0) : page.status === 404 ? 0 : null
+  if (page.status === 200) { countStats.ok++; return page.totalResults ?? 0 }
+  if (page.status === 404) { countStats.not_found++; return 0 }
+  const k = `${page.status ?? 'network'}: ${page.error ?? ''}`.slice(0, 120)
+  if (!countStats.failed[k]) console.warn(`  count failed for ${issn}: ${k}`)
+  countStats.failed[k] = (countStats.failed[k] ?? 0) + 1
+  return null
 }
 
 /**
@@ -519,6 +527,7 @@ async function main() {
     'utf-8'
   )
 
+  if (countStats.ok || countStats.not_found || Object.keys(countStats.failed).length) console.log(`ISSN count requests: ${JSON.stringify(countStats)}`)
   console.log('\n=== SUMMARY ===')
   console.log(JSON.stringify(summary, null, 2))
 }
