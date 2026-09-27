@@ -2,8 +2,15 @@ name: Global index and rankings
 
 # Automated GLOBAL-INDEX-1.0 cycle (posi-data/GLOBAL-INDEX-1.0-SPEC.md):
 # harvest every Crossref and OpenAlex journal, compute PCS-1.0 for each, build
-# the PCS-Q ranking edition. A new cycle starts every 30 days after the
-# previous one finished.
+# the PCS-Q ranking edition, once a month.
+#
+# Schedule: runs on the 1st, 2nd and 3rd of each month. The 1st starts the
+# month's cycle and normally finishes it (8 PCS shards take about two hours
+# for ~158,000 journals); the 2nd and 3rd only resume a cycle that did not
+# finish, and otherwise exit within minutes. A new cycle starts when the
+# last one is at least 20 days old, i.e. on the next month's 1st. (The
+# actions cache drops entries unused for 7 days, so a cycle must finish
+# within these three days; between months the work directory starts fresh.)
 #
 # Each run has three jobs:
 #   prepare  advances harvest and corpus (resumable), releases the corpus
@@ -26,7 +33,7 @@ name: Global index and rankings
 
 on:
   schedule:
-    - cron: '30 1 * * *'   # daily, 01:30 UTC
+    - cron: '30 1 1-3 * *'   # 1st-3rd of each month, 01:30 UTC
   workflow_dispatch:
     inputs:
       limit:
@@ -86,6 +93,7 @@ jobs:
             --curated posi-data/corpus/core-collection.json \
             --curated posi-data/corpus/global-benchmark.json \
             --budget-minutes 320 \
+            --cycle-days 20 \
             --no-pcs-fetch \
             ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
 
