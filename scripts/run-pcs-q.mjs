@@ -47,7 +47,7 @@ function shardFiles(dir) {
   const out = []
   for (const name of readdirSync(root)) {
     const p = join(root, name)
-    if (statSync(p).isDirectory()) out.push(...shardFiles(p))
+    if (statSync(p).isDirectory()) for (const f of shardFiles(p)) out.push(f)
     else if (name.endsWith('.json')) out.push(p)
   }
   return out

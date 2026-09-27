@@ -430,7 +430,8 @@ async function main() {
   if (started < targets.length) console.log(`Time budget reached: ${targets.length - started} journals left for the next run`)
   const pendingRetry = targets.length - allResults.length - (targets.length - started)
   if (pendingRetry > 0) console.log(`${pendingRetry} journals had transient failures and will be retried`)
-  results.push(...allResults)
+  // Not push(...allResults): spreading ~158,000 items overflows the call stack.
+  for (const r of allResults) results.push(r)
 
   const summary = {
     metric_year: metricYear,

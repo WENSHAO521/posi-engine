@@ -248,7 +248,8 @@ jobs:
         env:
           POSI_MAILTO: posi@panorama-sg.com
         run: |
-          node scripts/run-pcs-etl.mjs --corpus work/global-corpus.json --out work/pcs --concurrency 4 --budget-minutes 45 | grep -v '^\[' || true
+          node scripts/run-pcs-etl.mjs --corpus work/global-corpus.json --out work/pcs --concurrency 4 --budget-minutes 45 > retry.log 2>&1 || { tail -50 retry.log; exit 1; }
+          grep -v '^\[' retry.log | tail -30 || true
           node scripts/global/summarize-pcs.mjs --pcs-dir work/pcs > /dev/null
 
       - name: Advance the cycle
