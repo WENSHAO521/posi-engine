@@ -17,8 +17,11 @@ name: Global index and rankings
 #   pcs      8 parallel shards, each computing PCS for its share of the
 #            journals (run-pcs-etl.mjs --shard i/8); journals already done
 #            are skipped, and a shard that runs out of time resumes next run
-#   finish   merges the shards into the work directory, builds the PCS-Q
-#            edition once every journal is done, and releases it
+#   finish   merges the shard results, retries journals that hit transient
+#            Crossref failures, builds the PCS-Q edition once every journal is
+#            done, checks it (check-edition.mjs) and releases it
+# A failed run, an edition that fails its check, or a cycle still unfinished
+# on the 3rd opens an issue here (scripts/global/alert.sh).
 # The work directory is kept in the actions cache between runs.
 #
 # Results are published as releases of THIS repository (tag global-index-<cycle>):
@@ -40,6 +43,10 @@ on:
         description: 'Harvest limit per source (testing only; empty = everything)'
         required: false
         default: ''
+      force_release:
+        description: 'Release the edition even if its quality check fails (after reviewing the report)'
+        type: boolean
+        default: false
 
 concurrency:
   group: global-index
@@ -47,6 +54,7 @@ concurrency:
 
 permissions:
   contents: write   # releases on this repository
+  issues: write     # alerts
 
 env:
   SHARDS: 8
@@ -122,11 +130,25 @@ jobs:
         if: steps.cycle.outputs.publish == 'true'
         env:
           CYCLE: ${{ steps.cycle.outputs.cycle }}
+          FORCE_RELEASE: ${{ inputs.force_release || false }}
         run: scripts/global/release-edition.sh
 
       - name: Mark cycle published
         if: steps.cycle.outputs.publish == 'true'
         run: node scripts/global/run-cycle.mjs --work work --mark-published
+
+      # Harvest or corpus still unfinished after the last scheduled run of the
+      # month (the finish job covers the pcs stage).
+      - name: Alert if the cycle is unfinished on the 3rd
+        if: github.event_name == 'schedule' && (steps.cycle.outputs.stage == 'harvest' || steps.cycle.outputs.stage == 'corpus')
+        run: |
+          if [ "$(date -u +%d)" -ge 3 ]; then
+            scripts/global/alert.sh "The cycle is not finished after the last scheduled run of the month (stage: ${{ steps.cycle.outputs.stage }}). Run the workflow by hand within 7 days to finish it from the cached progress."
+          fi
+
+      - name: Alert on failure
+        if: failure()
+        run: scripts/global/alert.sh "The ${{ github.job }} job failed."
 
       - name: Save work directory
         if: always()
@@ -192,7 +214,7 @@ jobs:
     needs: [prepare, pcs]
     if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.stage == 'pcs'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -219,6 +241,14 @@ jobs:
         run: |
           for f in shards/*/pcs-shard.tar.gz; do tar -xzf "$f"; done
           echo "$(ls work/pcs/journals | wc -l) journals with PCS"
+
+      # Journals the shards left open: transient Crossref failures (each is
+      # tried up to 3 times in all) and any a shard had no time for.
+      - name: Retry open journals
+        env:
+          POSI_MAILTO: posi@panorama-sg.com
+        run: |
+          node scripts/run-pcs-etl.mjs --corpus work/global-corpus.json --out work/pcs --concurrency 4 --budget-minutes 45 | grep -v '^\[' || true
           node scripts/global/summarize-pcs.mjs --pcs-dir work/pcs > /dev/null
 
       - name: Advance the cycle
@@ -229,11 +259,25 @@ jobs:
         if: steps.cycle.outputs.publish == 'true'
         env:
           CYCLE: ${{ steps.cycle.outputs.cycle }}
+          FORCE_RELEASE: ${{ inputs.force_release || false }}
         run: scripts/global/release-edition.sh
 
       - name: Mark cycle published
         if: steps.cycle.outputs.publish == 'true'
         run: node scripts/global/run-cycle.mjs --work work --mark-published
+
+      # The 3rd is the last scheduled run of the month; after it the cached
+      # progress expires, so an unfinished cycle needs a person.
+      - name: Alert if the cycle is unfinished on the 3rd
+        if: steps.cycle.outputs.publish != 'true' && github.event_name == 'schedule' && steps.cycle.outcome == 'success'
+        run: |
+          if [ "$(date -u +%d)" -ge 3 ]; then
+            scripts/global/alert.sh "The cycle is not finished after the last scheduled run of the month (stage: ${{ steps.cycle.outputs.stage }}). Run the workflow by hand within 7 days to finish it from the cached progress."
+          fi
+
+      - name: Alert on failure
+        if: failure()
+        run: scripts/global/alert.sh "The ${{ github.job }} job failed."
 
       - name: Save work directory
         if: always()

@@ -290,6 +290,17 @@ function toSchemaSubset(result) {
   }
 }
 
+/** Attempts (across passes and runs) before a transient failure is recorded as final. */
+const TRANSIENT_MAX_ATTEMPTS = 3
+
+/** Network errors, timeouts, rate limiting and server errors: worth trying again later.
+ * 404 (no works under the ISSN), other 4xx and a missing ISSN are real answers. */
+function isTransientFailure(result) {
+  if (!result.issn_queried) return false
+  const s = result.fetch_status
+  return s == null || s === 408 || s === 429 || s >= 500
+}
+
 /** Stable shard of a journal id: 0..count-1. */
 function shardOf(posiId, count) {
   return createHash('md5').update(posiId).digest().readUInt32BE(0) % count
@@ -308,7 +319,7 @@ async function runPool(items, fn, concurrency, deadline) {
     }
   }
   await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker))
-  return results.filter(Boolean)
+  return { results: results.filter(Boolean), started: next }
 }
 
 async function main() {
@@ -364,6 +375,8 @@ async function main() {
   const journalsOutDir = join(outDir, 'journals')
   const pcsOutDir = join(outDir, 'pcs')
   const progressDir = join(outDir, '.progress')
+  const retryDir = join(outDir, 'retry')
+  ensureDir(retryDir)
   ensureDir(journalsOutDir)
   ensureDir(pcsOutDir)
   ensureDir(progressDir)
@@ -384,8 +397,24 @@ async function main() {
     } catch (err) {
       // Same isolation discipline as run-works-etl.mjs: one journal's
       // unexpected failure must never abort the whole batch run.
-      result = { ...emptyResult(j, metricYear, window, `unexpected error, isolated: ${err?.message ?? err}`) }
+      result = { ...emptyResult(j, metricYear, window, `unexpected error, isolated: ${err?.message ?? err}`), issn_queried: journalIssn(j) }
     }
+    // A transient failure (network, timeout, rate limit, server error) is not
+    // a result: the journal stays open and is tried again by a later pass or
+    // run, up to TRANSIENT_MAX_ATTEMPTS times, and only then recorded as is.
+    if (isTransientFailure(result)) {
+      const retryPath = join(retryDir, `${j.posi_id}.json`)
+      const attempts = (existsSync(retryPath) ? JSON.parse(readFileSync(retryPath, 'utf-8')).attempts : 0) + 1
+      clearProgress(progressDir, j.posi_id) // Crossref cursors expire; a retry starts the journal afresh
+      if (attempts < TRANSIENT_MAX_ATTEMPTS) {
+        writeFileSync(retryPath, JSON.stringify({ attempts, last_status: result.fetch_status, last_error: result.fetch_error ?? result.note, at: new Date().toISOString() }))
+        processedSoFar++
+        console.log(`[${processedSoFar}/${targets.length - skipped}+${skipped} skipped] ${j.title} (${j.posi_id}) transient failure (status=${result.fetch_status}), attempt ${attempts} of ${TRANSIENT_MAX_ATTEMPTS}; will retry`)
+        return null
+      }
+      result.note = `${result.note ? result.note + '; ' : ''}gave up after ${attempts} attempts with transient failures`
+    }
+    if (existsSync(join(retryDir, `${j.posi_id}.json`))) unlinkSync(join(retryDir, `${j.posi_id}.json`))
     writeFileSync(donePath, JSON.stringify(result, null, 2), 'utf-8')
     const shard = shardFor(j.posi_id)
     const shardDir = join(pcsOutDir, shard)
@@ -397,8 +426,10 @@ async function main() {
     return result
   }
 
-  const allResults = await runPool(targets, runOne, concurrency, deadline)
-  if (allResults.length < targets.length) console.log(`Time budget reached: ${targets.length - allResults.length} journals left for the next run`)
+  const { results: allResults, started } = await runPool(targets, runOne, concurrency, deadline)
+  if (started < targets.length) console.log(`Time budget reached: ${targets.length - started} journals left for the next run`)
+  const pendingRetry = targets.length - allResults.length - (targets.length - started)
+  if (pendingRetry > 0) console.log(`${pendingRetry} journals had transient failures and will be retried`)
   results.push(...allResults)
 
   const summary = {
