@@ -100,12 +100,20 @@ export async function fetchCrossrefWorksPage(issn, opts = {}) {
 
   let lastError = null
   let lastStatus = null
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts + 4; attempt++) {
     try {
       const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) })
       lastStatus = res.status
       if (res.status === 404) return { status: 404, totalResults: 0, items: [], nextCursor: null, error: null }
       if (!res.ok) {
+        // Rate limited: wait as long as Crossref asks (Retry-After), or back
+        // off exponentially up to a minute, and keep trying longer than for
+        // other errors, so a busy period never marks a journal as failed.
+        if (res.status === 429 && attempt < maxAttempts + 4) {
+          const after = Number(res.headers?.get?.('retry-after'))
+          await sleep(after > 0 ? after * 1000 : Math.min(60_000, 2 ** attempt * 1000))
+          continue
+        }
         if (isRetryableOutcome(res.status) && attempt < maxAttempts) { await sleep(2 ** attempt * 500); continue }
         return { status: res.status, totalResults: null, items: [], nextCursor: null, error: `HTTP ${res.status}` }
       }
@@ -122,6 +130,7 @@ export async function fetchCrossrefWorksPage(issn, opts = {}) {
       lastError = err?.message ?? String(err)
       lastStatus = null
       if (attempt < maxAttempts) { await sleep(2 ** attempt * 500); continue }
+      break
     }
   }
   return { status: lastStatus, totalResults: null, items: [], nextCursor: null, error: lastError ?? `failed after ${maxAttempts} attempts` }

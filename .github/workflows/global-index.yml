@@ -2,9 +2,17 @@ name: Global index and rankings
 
 # Automated GLOBAL-INDEX-1.0 cycle (posi-data/GLOBAL-INDEX-1.0-SPEC.md):
 # harvest every Crossref and OpenAlex journal, compute PCS-1.0 for each, build
-# the PCS-Q ranking edition. A full cycle takes several daily runs; each run
-# advances as far as its time budget allows and resumes from the cached work
-# directory. A new cycle starts every 30 days after the previous one finished.
+# the PCS-Q ranking edition. A new cycle starts every 30 days after the
+# previous one finished.
+#
+# Each run has three jobs:
+#   prepare  advances harvest and corpus (resumable), releases the corpus
+#   pcs      8 parallel shards, each computing PCS for its share of the
+#            journals (run-pcs-etl.mjs --shard i/8); journals already done
+#            are skipped, and a shard that runs out of time resumes next run
+#   finish   merges the shards into the work directory, builds the PCS-Q
+#            edition once every journal is done, and releases it
+# The work directory is kept in the actions cache between runs.
 #
 # Results are published as releases of THIS repository (tag global-index-<cycle>):
 #   - global-corpus.json.gz as soon as the corpus exists (journal directory),
@@ -33,12 +41,18 @@ concurrency:
 permissions:
   contents: write   # releases on this repository
 
+env:
+  SHARDS: 8
+
 jobs:
-  cycle:
+  prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     env:
       GH_TOKEN: ${{ github.token }}
+    outputs:
+      stage: ${{ steps.cycle.outputs.stage }}
+      cycle: ${{ steps.cycle.outputs.cycle }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,6 +73,8 @@ jobs:
           key: global-index-${{ github.run_id }}
           restore-keys: global-index-
 
+      # PCS itself runs in the pcs shards below; here the pcs stage only
+      # counts what is done (and moves on to ranking when everything is).
       - name: Advance the cycle
         id: cycle
         env:
@@ -70,11 +86,11 @@ jobs:
             --curated posi-data/corpus/core-collection.json \
             --curated posi-data/corpus/global-benchmark.json \
             --budget-minutes 320 \
-            --concurrency 4 \
+            --no-pcs-fetch \
             ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
 
       # The journal directory only needs the corpus, so it is released as soon
-      # as the corpus exists (PCS for every journal takes several more runs).
+      # as the corpus exists (PCS for every journal comes later).
       - name: Release the journal corpus
         if: steps.cycle.outputs.corpus_ready == 'true'
         env:
@@ -93,21 +109,119 @@ jobs:
               --notes "GLOBAL-INDEX-1.0 cycle $CYCLE. Journal corpus released; the PCS-Q edition is added when the cycle completes."
           fi
 
+      # Only when every journal was already done before this run.
       - name: Release the ranking edition
         if: steps.cycle.outputs.publish == 'true'
         env:
           CYCLE: ${{ steps.cycle.outputs.cycle }}
+        run: scripts/global/release-edition.sh
+
+      - name: Mark cycle published
+        if: steps.cycle.outputs.publish == 'true'
+        run: node scripts/global/run-cycle.mjs --work work --mark-published
+
+      - name: Save work directory
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: work
+          key: global-index-${{ github.run_id }}-prepare
+
+  pcs:
+    needs: prepare
+    if: needs.prepare.outputs.stage == 'pcs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Restore work directory
+        uses: actions/cache/restore@v4
+        with:
+          path: work
+          key: global-index-${{ github.run_id }}-prepare
+          fail-on-cache-miss: true
+
+      # Stops starting new journals after 310 minutes; the rest resume next run.
+      - name: Compute PCS for shard ${{ matrix.shard }}
+        env:
+          POSI_MAILTO: posi@panorama-sg.com
         run: |
-          set -euo pipefail
-          TAG="global-index-$CYCLE"
-          mkdir -p out
-          cp work/pcs-q/pcs-q-*.json work/pcs-q/pcs-q-*.csv out/
-          cp work/pcs-q/summary.json out/pcs-q-summary.json
-          cp work/pcs/summary.json out/pcs-summary.json
-          cp work/cycle.json out/cycle.json
-          tar -czf out/pcs-shards.tar.gz -C work/pcs pcs
-          gh release upload "$TAG" out/* --clobber
-          gh release edit "$TAG" --notes "GLOBAL-INDEX-1.0 cycle $CYCLE, posi-engine $(git rev-parse HEAD). Complete: journal corpus and PCS-Q edition."
+          touch "$RUNNER_TEMP/start"
+          node scripts/run-pcs-etl.mjs \
+            --corpus work/global-corpus.json \
+            --out work/pcs \
+            --shard ${{ matrix.shard }}/$SHARDS \
+            --concurrency 4 \
+            --budget-minutes 310 \
+            ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
+
+      # Only what this shard wrote: finished journals and mid-journal checkpoints.
+      - name: Pack results
+        if: always()
+        run: |
+          find work/pcs -type f -newer "$RUNNER_TEMP/start" ! -name summary.json ! -name per-journal-pcs.csv > "$RUNNER_TEMP/files" || true
+          echo "$(wc -l < "$RUNNER_TEMP/files") files"
+          tar -czf pcs-shard.tar.gz -T "$RUNNER_TEMP/files"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcs-shard-${{ matrix.shard }}
+          path: pcs-shard.tar.gz
+          retention-days: 3
+
+  finish:
+    needs: [prepare, pcs]
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.stage == 'pcs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Restore work directory
+        uses: actions/cache/restore@v4
+        with:
+          path: work
+          key: global-index-${{ github.run_id }}-prepare
+          fail-on-cache-miss: true
+
+      - name: Download shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pcs-shard-*
+          path: shards
+
+      - name: Merge shard results
+        run: |
+          for f in shards/*/pcs-shard.tar.gz; do tar -xzf "$f"; done
+          echo "$(ls work/pcs/journals | wc -l) journals with PCS"
+          node scripts/global/summarize-pcs.mjs --pcs-dir work/pcs > /dev/null
+
+      - name: Advance the cycle
+        id: cycle
+        run: node scripts/global/run-cycle.mjs --work work --budget-minutes 90 --no-pcs-fetch
+
+      - name: Release the ranking edition
+        if: steps.cycle.outputs.publish == 'true'
+        env:
+          CYCLE: ${{ steps.cycle.outputs.cycle }}
+        run: scripts/global/release-edition.sh
 
       - name: Mark cycle published
         if: steps.cycle.outputs.publish == 'true'

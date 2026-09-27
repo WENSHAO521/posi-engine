@@ -58,11 +58,19 @@
  *     [--corpus <path to corpus/global-benchmark.json> --benchmark-curated-only] \
  *     --out <output dir> \
  *     [--metric-year 2026] [--limit N] [--concurrency 4] [--delay-ms 200] \
- *     [--rows 1000] [--force]
+ *     [--rows 1000] [--force] [--shard i/N] [--budget-minutes M]
+ *
+ * PARALLEL SHARDS: --shard i/N keeps only the journals whose posi_id hashes
+ * to shard i of N (stable across runs), so N machines can each take one
+ * shard of a large corpus and write to their own --out; the per-journal
+ * files are then merged into one directory (they never overlap).
+ * --budget-minutes stops starting new journals after M minutes; journals
+ * in flight finish, and everything left resumes on the next run.
  */
 
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, unlinkSync, rmSync } from 'fs'
 import { resolve, join } from 'path'
+import { createHash } from 'crypto'
 import { fetchCrossrefWorksPage, PCS_SELECT_FIELDS, PCS_MAX_WORKS_PER_JOURNAL } from '../src/works-fetch.mjs'
 import { normalizeCrossrefWorkForPcs, isInPcsWindow, pcsWindowForMetricYear } from '../src/pcs-resolver.mjs'
 import { calculatePcs, calculatePcsCoverage, PCS_METHODOLOGY_VERSION } from '../src/pcs.mjs'
@@ -282,13 +290,25 @@ function toSchemaSubset(result) {
   }
 }
 
-async function runBatch(items, fn, concurrency) {
+/** Stable shard of a journal id: 0..count-1. */
+function shardOf(posiId, count) {
+  return createHash('md5').update(posiId).digest().readUInt32BE(0) % count
+}
+
+// A worker pool: each worker takes the next journal as soon as its last one
+// is done, so one large journal no longer holds up a whole batch. After the
+// deadline no new journal is started.
+async function runPool(items, fn, concurrency, deadline) {
   const results = []
-  for (let i = 0; i < items.length; i += concurrency) {
-    const batch = items.slice(i, i + concurrency)
-    results.push(...await Promise.all(batch.map(fn)))
+  let next = 0
+  async function worker() {
+    while (next < items.length && Date.now() < deadline) {
+      const i = next++
+      results[i] = await fn(items[i])
+    }
   }
-  return results
+  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker))
+  return results.filter(Boolean)
 }
 
 async function main() {
@@ -302,6 +322,10 @@ async function main() {
   const mailto = arg('mailto', 'posi@panorama-sg.com')
   const force = flag('force')
   const benchmarkCuratedOnly = flag('benchmark-curated-only')
+  const shardArg = arg('shard')
+  const [shardIndex, shardCount] = shardArg ? shardArg.split('/').map(Number) : [0, 1]
+  if (!(shardCount >= 1 && shardIndex >= 0 && shardIndex < shardCount)) { console.error(`bad --shard ${shardArg} (expected i/N)`); process.exit(1) }
+  const deadline = arg('budget-minutes') ? Date.now() + Number(arg('budget-minutes')) * 60_000 : Infinity
 
   if (corpusPaths.length === 0) {
     console.error('Usage: node scripts/run-pcs-etl.mjs --corpus <path> [--corpus <path> ...] --out <dir> [--metric-year 2026] [--limit N] [--concurrency 4] [--delay-ms 200] [--rows 1000] [--force] [--benchmark-curated-only]')
@@ -333,8 +357,9 @@ async function main() {
     seen.add(j.posi_id)
     return true
   })
+  if (shardCount > 1) corpus = corpus.filter(j => shardOf(j.posi_id, shardCount) === shardIndex)
   const targets = limit ? corpus.slice(0, limit) : corpus
-  console.log(`Loaded ${corpus.length} unique journals total${limit ? `, processing first ${targets.length}` : ''}`)
+  console.log(`Loaded ${corpus.length} unique journals${shardCount > 1 ? ` in shard ${shardIndex}/${shardCount}` : ' total'}${limit ? `, processing first ${targets.length}` : ''}`)
 
   const journalsOutDir = join(outDir, 'journals')
   const pcsOutDir = join(outDir, 'pcs')
@@ -372,7 +397,8 @@ async function main() {
     return result
   }
 
-  const allResults = await runBatch(targets, runOne, concurrency)
+  const allResults = await runPool(targets, runOne, concurrency, deadline)
+  if (allResults.length < targets.length) console.log(`Time budget reached: ${targets.length - allResults.length} journals left for the next run`)
   results.push(...allResults)
 
   const summary = {

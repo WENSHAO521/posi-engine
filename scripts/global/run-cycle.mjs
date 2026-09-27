@@ -13,7 +13,11 @@
  *   published-> a new cycle starts once --cycle-days have passed
  *
  *   node scripts/global/run-cycle.mjs --work work --curated <core.json> --curated <benchmark.json> \
- *     [--budget-minutes 330] [--cycle-days 30] [--concurrency 4] [--limit N]
+ *     [--budget-minutes 330] [--cycle-days 30] [--concurrency 4] [--limit N] [--no-pcs-fetch]
+ *
+ * --no-pcs-fetch: in the pcs stage, only count the journals already done
+ * and advance when all are. The workflow uses it when PCS runs as parallel
+ * shards (run-pcs-etl.mjs --shard i/N) whose results it merges into <work>/pcs.
  *
  * Writes <work>/cycle.json and, when a cycle finishes, prints `publish=true`
  * (also appended to $GITHUB_OUTPUT when set).
@@ -31,6 +35,7 @@ const budgetMs = Number(arg('budget-minutes', 330)) * 60_000
 const cycleDays = Number(arg('cycle-days', 30))
 const concurrency = arg('concurrency', '4')
 const limit = arg('limit')
+const noPcsFetch = flag('no-pcs-fetch')
 const deadline = Date.now() + budgetMs
 const engineDir = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -95,9 +100,13 @@ if (state.stage === 'corpus' && remaining() > 60_000) {
 }
 
 if (state.stage === 'pcs' && remaining() > 60_000) {
-  await run('scripts/run-pcs-etl.mjs', ['--corpus', corpusFile, '--out', pcsDir, '--concurrency', concurrency], { timeoutMs: remaining() - 30_000 })
-  const total = JSON.parse(readFileSync(corpusFile, 'utf-8')).length
-  const done = existsSync(join(pcsDir, 'journals')) ? readdirSync(join(pcsDir, 'journals')).length : 0
+  if (!noPcsFetch) await run('scripts/run-pcs-etl.mjs', ['--corpus', corpusFile, '--out', pcsDir, '--concurrency', concurrency], { timeoutMs: remaining() - 30_000 })
+  // Unique journals, as run-pcs-etl.mjs counts them, and which of them have a result.
+  const ids = new Set(JSON.parse(readFileSync(corpusFile, 'utf-8')).map(j => j.posi_id).filter(Boolean))
+  const files = new Set(existsSync(join(pcsDir, 'journals')) ? readdirSync(join(pcsDir, 'journals')) : [])
+  const total = ids.size
+  let done = 0
+  for (const id of ids) if (files.has(`${id}.json`)) done++
   state.pcs_progress = { done, total }
   if (done >= total) { state.stage = 'rank'; step('pcs', `complete ${done}/${total}`) } else step('pcs', `progress ${done}/${total}`)
 }
