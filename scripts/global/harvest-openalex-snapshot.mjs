@@ -10,10 +10,14 @@
  *
  * --profiles writes one compact profile per journal for the journal pages:
  * titles, homepage, APC, citation history, h-index and top topics.
+ *
+ * --issn-map writes ISSN -> [OpenAlex id, type] for sources that are not
+ * typed as journals (conference series, book series and so on), so journals
+ * known only to Crossref can still be linked to their OpenAlex source.
  * --keep-raw also writes each journal's raw OpenAlex record (topics included)
  * to <dir>/openalex-sources-raw.jsonl, for classification audits.
  */
-import { createWriteStream, existsSync, mkdirSync, rmSync } from 'fs'
+import { createWriteStream, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { createGunzip } from 'zlib'
 import { Readable } from 'stream'
@@ -54,6 +58,8 @@ export function profileOf(s) {
 const out = arg('out')
 const keepRaw = arg('keep-raw')
 const profilesOut = arg('profiles')
+const issnMapOut = arg('issn-map')
+const issnMap = {}
 if (!out) { console.error('Usage: --out <file.jsonl> [--keep-raw <dir>]'); process.exit(1) }
 if (!existsSync(dirname(out))) mkdirSync(dirname(out), { recursive: true })
 rmSync(out, { force: true })
@@ -77,7 +83,15 @@ for (const [i, url] of parts.entries()) {
         if (!line) continue
         sources++
         const s = JSON.parse(line)
-        if (s.type !== 'journal') continue
+        if (s.type !== 'journal') {
+          if (issnMapOut) {
+            const id = String(s.id).replace('https://openalex.org/', '')
+            for (const issn of new Set([s.issn_l, ...(s.issn ?? [])].filter(Boolean).map(x => String(x).toUpperCase()))) {
+              if (!issnMap[issn] || (s.works_count ?? 0) > issnMap[issn][2]) issnMap[issn] = [id, s.type ?? null, s.works_count ?? 0]
+            }
+          }
+          continue
+        }
         journals++
         w.write(JSON.stringify(fromOpenAlexSource(s)) + '\n')
         if (prof) prof.write(JSON.stringify(profileOf(s)) + '\n')
@@ -94,4 +108,5 @@ for (const [i, url] of parts.entries()) {
 await new Promise(r => w.end(r))
 if (raw) await new Promise(r => raw.end(r))
 if (prof) await new Promise(r => prof.end(r))
+if (issnMapOut) writeFileSync(issnMapOut, JSON.stringify(issnMap))
 console.log(`\nWrote ${journals} journals to ${out}`)

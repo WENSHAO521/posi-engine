@@ -71,6 +71,7 @@ const step = (stage, note) => { state.history.push({ at: new Date().toISOString(
 const oaFile = join(work, 'openalex-journals.jsonl')
 const crFile = join(work, 'crossref-journals.jsonl')
 const corpusFile = join(work, 'global-corpus.json')
+const issnMapFile = join(work, 'openalex-issn-map.json')
 const pcsDir = join(work, 'pcs')
 const rankDir = join(work, 'pcs-q')
 const lim = limit ? ['--limit', limit] : []
@@ -80,7 +81,7 @@ if (state.stage === 'harvest') {
   // budget); --limit test runs use the API harvester instead.
   const a = lim.length
     ? await run('scripts/global/harvest-openalex-journals.mjs', ['--out', oaFile, ...lim], { timeoutMs: remaining() })
-    : await run('scripts/global/harvest-openalex-snapshot.mjs', ['--out', oaFile, '--profiles', join(work, 'openalex-profiles.jsonl')], { timeoutMs: remaining() })
+    : await run('scripts/global/harvest-openalex-snapshot.mjs', ['--out', oaFile, '--profiles', join(work, 'openalex-profiles.jsonl'), '--issn-map', issnMapFile], { timeoutMs: remaining() })
   const b = a === 0 ? await run('scripts/global/harvest-crossref-journals.mjs', ['--out', crFile, ...lim], { timeoutMs: remaining() }) : 1
   if (a === 0 && b === 0) { state.stage = 'corpus'; step('harvest', 'complete') } else step('harvest', 'interrupted, will resume')
 }
@@ -88,6 +89,7 @@ if (state.stage === 'harvest') {
 if (state.stage === 'corpus' && remaining() > 60_000) {
   const code = await run('scripts/global/build-global-corpus.mjs', [
     '--openalex', oaFile, '--crossref', crFile, ...curated.flatMap(c => ['--curated', resolve(c)]), '--out', corpusFile,
+    ...(existsSync(issnMapFile) ? ['--openalex-issn-map', issnMapFile] : []),
   ])
   if (code === 0) { state.stage = 'pcs'; step('corpus', 'complete') }
 }
