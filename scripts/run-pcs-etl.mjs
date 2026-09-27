@@ -110,7 +110,9 @@ const countStats = { ok: 0, not_found: 0, failed: {} }
 /** How many works Crossref has under an ISSN in the window (one light request). */
 async function windowCount(issn, { startYear, endYear, mailto }) {
   const page = await fetchCrossrefWorksPage(issn, {
-    rows: 0, filter: `from-pub-date:${startYear}-01-01,until-pub-date:${endYear}-12-31`, selectFields: PCS_SELECT_FIELDS, mailto,
+    // sort/order as in the main fetch: the fetcher's default sort (published)
+    // makes Crossref answer 400 on this route.
+    rows: 0, filter: `from-pub-date:${startYear}-01-01,until-pub-date:${endYear}-12-31`, sort: 'created', order: 'asc', selectFields: PCS_SELECT_FIELDS, mailto,
   })
   if (page.status === 200) { countStats.ok++; return page.totalResults ?? 0 }
   if (page.status === 404) { countStats.not_found++; return 0 }
