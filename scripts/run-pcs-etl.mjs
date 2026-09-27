@@ -67,11 +67,11 @@
  * --budget-minutes stops starting new journals after M minutes; journals
  * in flight finish, and everything left resumes on the next run.
  *
- * ISSN CHOICE: a journal with several ISSNs is fetched under the one with
- * the most works in the window (one light count request per ISSN; see
- * chooseIssn). --recheck-issns revisits journals already done without that
- * choice and refetches those where another ISSN has more works; each is
- * marked checked (issn_window_counts), so a rerun does not repeat it.
+ * ISSN FALLBACK: a journal is fetched under its first ISSN, and under the
+ * next only when an ISSN has no works in the window (see issnsToTry); the
+ * ISSNs passed over are kept in issns_without_works. A journal with no works
+ * under any ISSN gets no PCS and is not ranked. --recheck-issns applies the
+ * fallback to journals recorded with no works before it existed.
  */
 
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, unlinkSync, rmSync } from 'fs'
@@ -104,42 +104,18 @@ function journalIssns(journal) {
   return [...new Set([journal.issn_online, journal.issn_print, ...(journal.issns ?? [])].filter(Boolean))]
 }
 
-/** Outcomes of the count requests, printed with the summary (a failed count is otherwise silent). */
-const countStats = { ok: 0, not_found: 0, failed: {} }
-
-/** How many works Crossref has under an ISSN in the window (one light request). */
-async function windowCount(issn, { startYear, endYear, mailto }) {
-  const page = await fetchCrossrefWorksPage(issn, {
-    // sort/order as in the main fetch: the fetcher's default sort (published)
-    // makes Crossref answer 400 on this route.
-    rows: 0, filter: `from-pub-date:${startYear}-01-01,until-pub-date:${endYear}-12-31`, sort: 'created', order: 'asc', selectFields: PCS_SELECT_FIELDS, mailto,
-  })
-  if (page.status === 200) { countStats.ok++; return page.totalResults ?? 0 }
-  if (page.status === 404) { countStats.not_found++; return 0 }
-  const k = `${page.status ?? 'network'}: ${page.error ?? ''}`.slice(0, 120)
-  if (!countStats.failed[k]) console.warn(`  count failed for ${issn}: ${k}`)
-  countStats.failed[k] = (countStats.failed[k] ?? 0) + 1
-  return null
-}
 
 /**
- * The ISSN to fetch: of a journal's ISSNs, the one Crossref holds the most
- * works under in the window. A journal's ISSN-L or first ISSN is sometimes
- * a ceased or print-only ISSN with no current works (The Lancet: ISSN-L
- * 0099-5355 has none from 2022, 0140-6736 has thousands), so querying only
- * the first would record no PCS for a journal that has one. Journals with
- * a single ISSN cost no extra request.
- * @returns {Promise<{ issn: string|null, counts: Record<string, number|null> }>}
+ * The ISSNs to fetch a journal under, in order. A journal's first ISSN (its
+ * ISSN-L) is sometimes a ceased or print-only ISSN with no current works
+ * (The Lancet: ISSN-L 0099-5355 has none from 2022; 0140-6736 has 6,228).
+ * processJournal fetches under the first and moves to the next only when an
+ * ISSN has no works in the window; a journal none of whose ISSNs has works
+ * is recorded without a PCS and left unranked. Journals whose first ISSN
+ * has works cost no extra request.
  */
-async function chooseIssn(journal, window, mailto) {
-  const issns = journalIssns(journal)
-  if (issns.length <= 1) return { issn: issns[0] ?? null, counts: {} }
-  const counts = {}
-  for (const i of issns) counts[i] = await windowCount(i, { startYear: window.startYear, endYear: window.endYear, mailto })
-  // A failed count (null) never wins over a real one; ties keep the preferred order.
-  let best = issns[0]
-  for (const i of issns) if ((counts[i] ?? -1) > (counts[best] ?? -1)) best = i
-  return { issn: best, counts }
+function issnsToTry(journal, skip = []) {
+  return journalIssns(journal).filter(i => !skip.includes(i))
 }
 
 function ensureDir(dir) { if (!existsSync(dir)) mkdirSync(dir, { recursive: true }) }
@@ -276,18 +252,31 @@ function emptyResult(journal, metricYear, window, note) {
   }
 }
 
-async function processJournal(journal, { metricYear, window, rows, progressDir, delayMs, mailto, chosen }) {
-  const { issn, counts } = chosen ?? await chooseIssn(journal, window, mailto)
-  if (!issn) return emptyResult(journal, metricYear, window, 'no issn_online or issn_print on record -- nothing to query Crossref with')
+async function processJournal(journal, { metricYear, window, rows, progressDir, delayMs, mailto, skipIssns = [] }) {
+  const candidates = issnsToTry(journal, skipIssns)
+  if (!candidates.length) return emptyResult(journal, metricYear, window, 'no issn_online or issn_print on record -- nothing to query Crossref with')
 
-  const fetchResult = await fetchJournalWindow(issn, { startYear: window.startYear, endYear: window.endYear, rows, progressDir, posiId: journal.posi_id, delayMs, mailto })
+  // Fetch under the first ISSN; move to the next only when one has no works
+  // in the window (404 or zero results). A failed request stops here and is
+  // retried as a transient failure, never skipped past.
+  const tried = [...skipIssns]
+  let issn, fetchResult
+  for (const candidate of candidates) {
+    issn = candidate
+    fetchResult = await fetchJournalWindow(issn, { startYear: window.startYear, endYear: window.endYear, rows, progressDir, posiId: journal.posi_id, delayMs, mailto })
+    const empty = fetchResult.status === 404 || (fetchResult.status === 200 && fetchResult.rawItems.length === 0 && !fetchResult.totalResults)
+    if (!empty) break
+    tried.push(issn)
+    clearProgress(progressDir, journal.posi_id)
+  }
+  const issnsTried = tried.filter(i => i !== issn)
 
   if (fetchResult.status !== 200 && fetchResult.rawItems.length === 0) {
     return {
       ...emptyResult(journal, metricYear, window, fetchResult.status === 404
         ? 'Crossref has no works registered under this ISSN'
         : `Crossref fetch did not succeed: status=${fetchResult.status} error=${fetchResult.error}`),
-      issn_queried: issn, issn_window_counts: counts, fetch_status: fetchResult.status, fetch_error: fetchResult.error,
+      issn_queried: issn, issns_without_works: issnsTried, fetch_status: fetchResult.status, fetch_error: fetchResult.error,
       enumerated_count: fetchResult.totalResults, pages_fetched: fetchResult.pagesFetched,
     }
   }
@@ -303,7 +292,7 @@ async function processJournal(journal, { metricYear, window, rows, progressDir, 
   return {
     posi_id: journal.posi_id, journal_code: journal.journal_code, title: journal.title,
     metric_year: metricYear, pcs_window_start_year: window.startYear, pcs_window_end_year: window.endYear,
-    issn_queried: issn, issn_window_counts: counts, fetch_status: fetchResult.status, fetch_error: fetchResult.error,
+    issn_queried: issn, issns_without_works: issnsTried, fetch_status: fetchResult.status, fetch_error: fetchResult.error,
     enumerated_count: enumeratedCount, works_fetched: fetchResult.rawItems.length, pages_fetched: fetchResult.pagesFetched,
     pcs: pcsResult.pcs, pcs_eligible_items: pcsResult.eligible_items, pcs_citation_count: pcsResult.citation_count,
     pcs_items_with_citation_data: pcsResult.items_with_citation_data,
@@ -438,28 +427,23 @@ async function main() {
 
   async function runOne(j) {
     const donePath = join(journalsOutDir, `${j.posi_id}.json`)
-    let chosen = null
+    let skipIssns = []
     if (!force && existsSync(donePath)) {
       const done = JSON.parse(readFileSync(donePath, 'utf-8'))
-      // --recheck-issns: a journal done before ISSN choice existed is redone
-      // only if another of its ISSNs holds more works in the window than
-      // the one it was fetched under.
-      const others = recheckIssns && !done.issn_window_counts ? journalIssns(j).filter(i => i !== done.issn_queried) : []
-      if (others.length) {
-        const c = await chooseIssn(j, window, mailto)
-        if (c.issn && c.issn !== done.issn_queried && (c.counts[c.issn] ?? 0) > (done.enumerated_count ?? 0)) chosen = c
-        // Marked checked only when every count came back; a failed count is retried next run.
-        else if (Object.values(c.counts).every(n => n != null)) { done.issn_window_counts = c.counts; writeFileSync(donePath, JSON.stringify(done, null, 2), 'utf-8') }
-      }
-      if (!chosen) {
+      // --recheck-issns: a journal recorded with no works under its first
+      // ISSN, before the fallback existed, is tried under its other ISSNs.
+      const noWorks = done.fetch_status === 404 || (done.fetch_status === 200 && !done.enumerated_count)
+      const untried = recheckIssns && noWorks && !done.issns_without_works && done.issn_queried ? issnsToTry(j, [done.issn_queried]) : []
+      if (!untried.length) {
         skipped++
         return done
       }
-      console.log(`  recheck ${j.posi_id}: ${done.issn_queried} had ${done.enumerated_count ?? 0} works in the window, ${chosen.issn} has ${chosen.counts[chosen.issn]}; refetching`)
+      skipIssns = [done.issn_queried]
+      console.log(`  recheck ${j.posi_id}: no works under ${done.issn_queried}; trying ${untried.join(', ')}`)
     }
     let result
     try {
-      result = await processJournal(j, { metricYear, window, rows, progressDir, delayMs, mailto, chosen })
+      result = await processJournal(j, { metricYear, window, rows, progressDir, delayMs, mailto, skipIssns })
     } catch (err) {
       // Same isolation discipline as run-works-etl.mjs: one journal's
       // unexpected failure must never abort the whole batch run.
@@ -529,7 +513,6 @@ async function main() {
     'utf-8'
   )
 
-  if (countStats.ok || countStats.not_found || Object.keys(countStats.failed).length) console.log(`ISSN count requests: ${JSON.stringify(countStats)}`)
   console.log('\n=== SUMMARY ===')
   console.log(JSON.stringify(summary, null, 2))
 }
