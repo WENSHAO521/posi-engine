@@ -1,0 +1,16 @@
+name: Crossref probe (temporary)
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          F='filter=from-pub-date:2022-01-01,until-pub-date:2025-12-31'
+          for q in "rows=0&cursor=*&$F&select=DOI,type,is-referenced-by-count,published,issued&sort=created&order=asc" "rows=0&$F" "rows=0&$F&select=DOI,type,is-referenced-by-count,published,issued" "rows=1&$F&select=DOI"; do
+            for issn in 0140-6736 0099-5355; do
+              echo "== $issn ?$q"
+              curl -s -o body.json -w 'HTTP %{http_code}\n' "https://api.crossref.org/journals/$issn/works?$q&mailto=posi@panorama-sg.com"
+              head -c 300 body.json | tr -d '\n' | sed 's/"items":\[.*//' ; echo
+              sleep 1
+            done
+          done
