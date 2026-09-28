@@ -56,6 +56,17 @@ test('curated records keep their POSI-J id and are not duplicated', () => {
   assert.equal(out[0].curated, true)
 })
 
+test('curated titles win over registry titles, which stay as alternate titles', () => {
+  const oa = [fromOpenAlexSource(oaSource())]
+  const registry = oa[0].title
+  const [rec] = buildGlobalCorpus(oa, [], [{ posi_id: 'POSI-J-000042', issns: ['8765-4321'], title: 'Renamed Journal', alternate_titles: [registry.toUpperCase(), 'Old Name'] }])
+  assert.equal(rec.title, 'Renamed Journal')
+  assert.deepEqual(rec.alternate_titles, [registry.toUpperCase(), 'Old Name'])
+  const [plain] = buildGlobalCorpus(oa, [], [{ posi_id: 'POSI-J-000042', issns: ['8765-4321'] }])
+  assert.equal(plain.title, registry)
+  assert.equal('alternate_titles' in plain, false)
+})
+
 test('OpenAlex journals without an ISSN are not indexed', () => {
   assert.equal(buildGlobalCorpus([fromOpenAlexSource(oaSource({ issn_l: null, issn: [] }))], []).length, 0)
 })
