@@ -5,7 +5,10 @@
  *
  * Identity rules (spec § 2):
  *   - merge across sources on ISSN only, never on title
- *   - a journal with a curated record keeps its POSI-J id
+ *   - a journal with a curated record keeps its POSI-J id, and its curated
+ *     title (checked against the ISSN Portal) when it has one: registry
+ *     titles can lag a rename, so the harvested title is kept in
+ *     alternate_titles instead
  *   - otherwise it is keyed `ISSNL-<issn-l>` (OpenAlex ISSN-L, else the
  *     first Crossref ISSN); POSI-J ids are never minted here
  *   - an ISSN is required for indexing (as in the major citation databases):
@@ -62,12 +65,19 @@ export function fromCrossrefJournal(item) {
  * Merge harvested records into one corpus.
  * @param {ReturnType<typeof fromOpenAlexSource>[]} openalex
  * @param {ReturnType<typeof fromCrossrefJournal>[]} crossref
- * @param {{ posi_id: string, issns: string[] }[]} curated - existing curated records (POSI-J ids)
+ * @param {{ posi_id: string, issns: string[], title?: string|null, alternate_titles?: string[]|null }[]} curated - existing curated records (POSI-J ids)
  * @returns {object[]} corpus records shaped for run-pcs-etl.mjs (posi_id, issn_online, issn_print, title, ...)
  */
+/** Distinct titles other than `title`, ignoring case and punctuation. */
+function alternates(title, titles) {
+  const key = t => String(t).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  const seen = new Set([key(title ?? '')])
+  return titles.filter(t => t && !seen.has(key(t)) && seen.add(key(t)))
+}
+
 export function buildGlobalCorpus(openalex, crossref, curated = []) {
   const curatedByIssn = new Map()
-  for (const c of curated) for (const i of c.issns.map(normIssn).filter(Boolean)) curatedByIssn.set(i, c.posi_id)
+  for (const c of curated) for (const i of c.issns.map(normIssn).filter(Boolean)) curatedByIssn.set(i, c)
 
   const records = []
   const byIssn = new Map()
@@ -102,15 +112,18 @@ export function buildGlobalCorpus(openalex, crossref, curated = []) {
   const seen = new Set()
   const out = []
   for (const r of records) {
-    const curatedId = r.issns.map(i => curatedByIssn.get(i)).find(Boolean) ?? null
-    const key = curatedId ?? `ISSNL-${r.issn_l ?? r.issns[0]}`
+    const c = r.issns.map(i => curatedByIssn.get(i)).find(Boolean) ?? null
+    const key = c?.posi_id ?? `ISSNL-${r.issn_l ?? r.issns[0]}`
     if (seen.has(key)) continue // two harvested records resolving to one curated journal
     seen.add(key)
     const ordered = r.issn_l ? [r.issn_l, ...r.issns.filter(i => i !== r.issn_l)] : r.issns
+    const title = c?.title || r.title
+    const alternateTitles = c ? alternates(title, [...(c.alternate_titles ?? []), r.title]) : []
     out.push({
       posi_id: key,
-      curated: !!curatedId,
-      title: r.title,
+      curated: !!c,
+      title,
+      ...(alternateTitles.length ? { alternate_titles: alternateTitles } : {}),
       publisher: r.publisher,
       // The ETL queries issn_online first: put the ISSN-L there, since a
       // journal's secondary ISSNs often have few or no DOIs registered.
