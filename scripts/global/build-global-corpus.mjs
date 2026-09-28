@@ -8,7 +8,9 @@
  *     --curated <posi-data>/corpus/core-collection.json --curated <posi-data>/corpus/global-benchmark.json \
  *     --out <dir>/global-corpus.json
  *
- * Writes the corpus plus <out>.summary.json (counts by source, PSC confidence).
+ * Writes the corpus plus <out>.summary.json (counts by source, PSC confidence,
+ * and title_mismatches: curated journals whose Crossref/OpenAlex title
+ * differs from the curated title and is not yet one of its alternate titles).
  *
  * --openalex-issn-map <json> (from harvest-openalex-snapshot.mjs --issn-map)
  * links journals known only to Crossref to an OpenAlex source that is not
@@ -17,7 +19,7 @@
 import { readFileSync, writeFileSync } from 'fs'
 import { arg } from './lib.mjs'
 import { readJsonl } from './lib.mjs'
-import { buildGlobalCorpus, normIssn } from '../../src/global-index.mjs'
+import { buildGlobalCorpus, normIssn, titleMismatches } from '../../src/global-index.mjs'
 
 const all = name => { const o = []; for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === `--${name}`) o.push(process.argv[i + 1]); return o }
 const out = arg('out')
@@ -54,6 +56,7 @@ const summary = {
   by_psc_confidence: tally('psc_confidence'),
   inputs: { openalex: openalex.length, crossref: crossref.length, curated: curated.length },
   linked_to_non_journal_openalex_source: linked,
+  title_mismatches: titleMismatches(corpus, curated),
 }
 writeFileSync(`${out}.summary.json`, JSON.stringify(summary, null, 2))
-console.log(JSON.stringify(summary, null, 2))
+console.log(JSON.stringify({ ...summary, title_mismatches: summary.title_mismatches.length }, null, 2))

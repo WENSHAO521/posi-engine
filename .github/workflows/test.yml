@@ -1,0 +1,43 @@
+name: Test
+
+# Unit tests, and schema validation of the current posi-data (public) with
+# this commit's validator, on every push and pull request.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Check out posi-data
+        uses: actions/checkout@v4
+        with:
+          repository: WENSHAO521/posi-data
+          path: posi-data
+          sparse-checkout: |
+            schema
+            corpus
+            journals
+            metrics
+            rankings
+
+      - name: Validate posi-data
+        run: node scripts/validate-against-schema.mjs posi-data

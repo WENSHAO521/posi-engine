@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normIssn, fromOpenAlexSource, fromCrossrefJournal, buildGlobalCorpus } from '../src/global-index.mjs'
+import { normIssn, fromOpenAlexSource, fromCrossrefJournal, buildGlobalCorpus, titleKey, titleMismatches } from '../src/global-index.mjs'
 
 const oaSource = (over = {}) => ({
   id: 'https://openalex.org/S1', display_name: 'Journal A', host_organization_name: 'Pub A',
@@ -65,6 +65,36 @@ test('curated titles win over registry titles, which stay as alternate titles', 
   const [plain] = buildGlobalCorpus(oa, [], [{ posi_id: 'POSI-J-000042', issns: ['8765-4321'] }])
   assert.equal(plain.title, registry)
   assert.equal('alternate_titles' in plain, false)
+})
+
+test('typed alternate titles are kept as given and deduplicated by their text', () => {
+  const oa = [fromOpenAlexSource(oaSource())]
+  const zh = { title: '期刊甲', type: 'translation', lang: 'zh' }
+  const [rec] = buildGlobalCorpus(oa, [], [{ posi_id: 'POSI-J-000042', issns: ['8765-4321'], title: 'Renamed Journal', alternate_titles: [zh, { title: 'Journal A', type: 'former', until: 2026 }] }])
+  assert.deepEqual(rec.alternate_titles, [zh, { title: 'Journal A', type: 'former', until: 2026 }])
+  assert.equal(rec.registry_title, 'Journal A')
+})
+
+test('titleKey ignores case, punctuation, "&" vs "and" and a leading "The"', () => {
+  assert.equal(titleKey('The Journal of X & Y'), titleKey('journal of x and y'))
+  assert.equal(titleKey('Health Nexus: Interdisciplinary'), titleKey('Health Nexus Interdisciplinary'))
+  assert.notEqual(titleKey('Health Nexus'), titleKey('Health Nexus Interdisciplinary'))
+})
+
+test('titleMismatches lists curated journals whose registry title is not yet an alternate title', () => {
+  const oa = [
+    fromOpenAlexSource(oaSource()),
+    fromOpenAlexSource(oaSource({ id: 'S2', display_name: 'Journal B Long Name', issn_l: '9999-0000', issn: ['9999-0000'] })),
+    fromOpenAlexSource(oaSource({ id: 'S3', display_name: 'The Journal C', issn_l: '1111-2222', issn: ['1111-2222'] })),
+  ]
+  const curated = [
+    { posi_id: 'POSI-J-000001', issns: ['1234-5678'], title: 'Journal A Renamed' },
+    { posi_id: 'POSI-J-000002', issns: ['9999-0000'], title: 'Journal B', alternate_titles: ['Journal B: Long Name'] },
+    { posi_id: 'POSI-J-000003', issns: ['1111-2222'], title: 'Journal C' },
+  ]
+  const corpus = buildGlobalCorpus(oa, [], curated)
+  assert.deepEqual(titleMismatches(corpus, curated), [{ posi_id: 'POSI-J-000001', title: 'Journal A Renamed', registry_title: 'Journal A' }])
+  assert.equal('registry_title' in corpus.find(r => r.posi_id === 'POSI-J-000003'), false)
 })
 
 test('OpenAlex journals without an ISSN are not indexed', () => {

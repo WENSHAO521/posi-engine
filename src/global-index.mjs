@@ -62,19 +62,39 @@ export function fromCrossrefJournal(item) {
 }
 
 /**
+ * Comparison key for titles: case, punctuation, "&"/"and" and a leading
+ * "The" do not make two titles different.
+ */
+export function titleKey(t) {
+  return String(t ?? '').toLowerCase().replace(/&/g, ' and ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/^the /, '')
+}
+
+/**
+ * An alternate title is a string or `{ title, type, lang?, until? }`
+ * (posi-data schema/journal.schema.json). Returns its title text.
+ */
+export function alternateTitleText(a) {
+  return typeof a === 'string' ? a : a?.title ?? null
+}
+
+/** Distinct alternate titles other than `title`, keeping the first form of each. */
+function alternates(title, titles) {
+  const seen = new Set([titleKey(title)])
+  return titles.filter(a => {
+    const k = titleKey(alternateTitleText(a))
+    return k && !seen.has(k) && seen.add(k)
+  })
+}
+
+/**
  * Merge harvested records into one corpus.
  * @param {ReturnType<typeof fromOpenAlexSource>[]} openalex
  * @param {ReturnType<typeof fromCrossrefJournal>[]} crossref
- * @param {{ posi_id: string, issns: string[], title?: string|null, alternate_titles?: string[]|null }[]} curated - existing curated records (POSI-J ids)
- * @returns {object[]} corpus records shaped for run-pcs-etl.mjs (posi_id, issn_online, issn_print, title, ...)
+ * @param {{ posi_id: string, issns: string[], title?: string|null, alternate_titles?: (string|object)[]|null }[]} curated - existing curated records (POSI-J ids)
+ * @returns {object[]} corpus records shaped for run-pcs-etl.mjs (posi_id, issn_online, issn_print, title, ...).
+ *   A curated record whose harvested title differs from its curated title
+ *   carries the harvested one as `registry_title` (see titleMismatches).
  */
-/** Distinct titles other than `title`, ignoring case and punctuation. */
-function alternates(title, titles) {
-  const key = t => String(t).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
-  const seen = new Set([key(title ?? '')])
-  return titles.filter(t => t && !seen.has(key(t)) && seen.add(key(t)))
-}
-
 export function buildGlobalCorpus(openalex, crossref, curated = []) {
   const curatedByIssn = new Map()
   for (const c of curated) for (const i of c.issns.map(normIssn).filter(Boolean)) curatedByIssn.set(i, c)
@@ -119,11 +139,13 @@ export function buildGlobalCorpus(openalex, crossref, curated = []) {
     const ordered = r.issn_l ? [r.issn_l, ...r.issns.filter(i => i !== r.issn_l)] : r.issns
     const title = c?.title || r.title
     const alternateTitles = c ? alternates(title, [...(c.alternate_titles ?? []), r.title]) : []
+    const registryTitle = c && r.title && titleKey(r.title) !== titleKey(title) ? r.title : null
     out.push({
       posi_id: key,
       curated: !!c,
       title,
       ...(alternateTitles.length ? { alternate_titles: alternateTitles } : {}),
+      ...(registryTitle ? { registry_title: registryTitle } : {}),
       publisher: r.publisher,
       // The ETL queries issn_online first: put the ISSN-L there, since a
       // journal's secondary ISSNs often have few or no DOIs registered.
@@ -145,4 +167,20 @@ export function buildGlobalCorpus(openalex, crossref, curated = []) {
     })
   }
   return out.sort((a, b) => a.posi_id.localeCompare(b.posi_id))
+}
+
+/**
+ * Curated journals whose Crossref/OpenAlex title differs from the curated
+ * title and is not yet recorded among its alternate titles: each needs a
+ * decision, either record it as an alternate title or have the registry
+ * corrected.
+ * @param {object[]} corpus - buildGlobalCorpus output
+ * @param {{ posi_id: string, alternate_titles?: (string|object)[]|null }[]} curated
+ * @returns {{ posi_id: string, title: string, registry_title: string }[]}
+ */
+export function titleMismatches(corpus, curated) {
+  const known = new Map(curated.map(c => [c.posi_id, new Set((c.alternate_titles ?? []).map(a => titleKey(alternateTitleText(a))))]))
+  return corpus
+    .filter(r => r.registry_title && !known.get(r.posi_id)?.has(titleKey(r.registry_title)))
+    .map(r => ({ posi_id: r.posi_id, title: r.title, registry_title: r.registry_title }))
 }
