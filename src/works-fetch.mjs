@@ -84,6 +84,14 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
  *   fetch function.
  * @returns {Promise<{ status: number|null, totalResults: number|null, items: object[], nextCursor: string|null, error: string|null }>}
  */
+/**
+ * Process-wide Crossref request counters, reported in run-pcs-etl.mjs's
+ * summary: how many page requests were made, how many were answered 429,
+ * and how long was spent waiting them out. They show whether a run is
+ * limited by Crossref's rate limit (and so whether more shards would help).
+ */
+export const crossrefRequestStats = { requests: 0, rate_limited: 0, rate_limit_wait_ms: 0 }
+
 export async function fetchCrossrefWorksPage(issn, opts = {}) {
   const {
     cursor = '*', rows = 50, filter = 'type:journal-article', sort = 'published', order = 'desc',
@@ -102,6 +110,7 @@ export async function fetchCrossrefWorksPage(issn, opts = {}) {
   let lastStatus = null
   for (let attempt = 1; attempt <= maxAttempts + 4; attempt++) {
     try {
+      crossrefRequestStats.requests++
       const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) })
       lastStatus = res.status
       if (res.status === 404) return { status: 404, totalResults: 0, items: [], nextCursor: null, error: null }
@@ -111,7 +120,10 @@ export async function fetchCrossrefWorksPage(issn, opts = {}) {
         // other errors, so a busy period never marks a journal as failed.
         if (res.status === 429 && attempt < maxAttempts + 4) {
           const after = Number(res.headers?.get?.('retry-after'))
-          await sleep(after > 0 ? after * 1000 : Math.min(60_000, 2 ** attempt * 1000))
+          const wait = after > 0 ? after * 1000 : Math.min(60_000, 2 ** attempt * 1000)
+          crossrefRequestStats.rate_limited++
+          crossrefRequestStats.rate_limit_wait_ms += wait
+          await sleep(wait)
           continue
         }
         if (isRetryableOutcome(res.status) && attempt < maxAttempts) { await sleep(2 ** attempt * 500); continue }

@@ -6,7 +6,7 @@ name: Global index and rankings
 # edition, once a month.
 #
 # Schedule: runs on the 1st, 2nd and 3rd of each month. The 1st starts the
-# month's cycle and normally finishes it (8 PCS shards take about two hours
+# month's cycle and normally finishes it (16 PCS shards take about an hour
 # for ~158,000 journals); the 2nd and 3rd only resume a cycle that did not
 # finish, and otherwise exit within minutes. A new cycle starts when the
 # last one is at least 20 days old, i.e. on the next month's 1st. (The
@@ -15,7 +15,7 @@ name: Global index and rankings
 #
 # Each run has three jobs:
 #   prepare  advances harvest and corpus (resumable), releases the corpus
-#   pcs      8 parallel shards, each computing PCS for its share of the
+#   pcs      16 parallel shards, each computing PCS for its share of the
 #            journals (run-pcs-etl.mjs --shard i/8); journals already done
 #            are skipped, and a shard that runs out of time resumes next run
 #   finish   merges the shard results, retries journals that hit transient
@@ -66,7 +66,7 @@ permissions:
   issues: write     # alerts
 
 env:
-  SHARDS: 8
+  SHARDS: 16
 
 jobs:
   prepare:
@@ -177,7 +177,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - uses: actions/checkout@v4
 
