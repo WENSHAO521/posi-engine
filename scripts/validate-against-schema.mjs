@@ -2,13 +2,17 @@
 /**
  * validate-against-schema.mjs
  *
- * Validates every committed journals/discovered/*.jsonl record,
+ * Validates every committed journals/core/**\/*.json and
+ * journals/discovered/*.jsonl record,
  * metrics/**\/*.json record, and rankings/**\/*.json record (each a JSON
  * array of 1+ ranking records for one journal) in a posi-data checkout
  * against that repo's own schema/journal.schema.json,
  * schema/metric.schema.json, and schema/ranking.schema.json — real ajv
  * validation (draft 2020-12), not a hand-rolled required-field check.
- * Exits non-zero if anything fails, so it's usable as a CI gate.
+ * Also checks that corpus/core-collection.json and journals/core agree on
+ * each journal's title and alternate titles, and that no alternate title
+ * repeats the title. Exits non-zero if anything fails, so it's usable as a
+ * CI gate (posi-data's validate workflow).
  *
  * Usage:
  *   node scripts/validate-against-schema.mjs /path/to/posi-data [--data-dir /path/to/metrics-and-rankings-root]
@@ -23,6 +27,7 @@ import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
 import { readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
+import { titleKey, alternateTitleText } from '../src/global-index.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -57,6 +62,43 @@ function walk(dir) {
   }
   return out
 }
+
+// journals/core/**/*.json
+const coreRecords = new Map()
+try {
+  let count = 0
+  for (const f of walk(join(posiDataDir, 'journals/core'))) {
+    const obj = JSON.parse(readFileSync(f, 'utf-8'))
+    count++
+    coreRecords.set(obj.id, obj)
+    if (!validateJournal(obj)) {
+      errors++
+      console.log(`INVALID journal ${f}:`, JSON.stringify(validateJournal.errors))
+    }
+  }
+  console.log(`Validated ${count} journal records in journals/core`)
+} catch (e) { console.log('journals/core check skipped:', e.message) }
+
+// corpus/core-collection.json agrees with journals/core on titles
+try {
+  const corpus = JSON.parse(readFileSync(join(posiDataDir, 'corpus/core-collection.json'), 'utf-8'))
+  const texts = j => (j.alternate_titles ?? []).map(a => alternateTitleText(a))
+  let count = 0
+  for (const j of corpus) {
+    const rec = coreRecords.get(j.posi_id)
+    if (!rec) continue
+    count++
+    const problems = []
+    if (rec.title !== j.title) problems.push(`title "${j.title}" in corpus/core-collection.json, "${rec.title}" in journals/core`)
+    if (JSON.stringify(texts(rec)) !== JSON.stringify(texts(j))) problems.push(`alternate_titles differ between corpus/core-collection.json and journals/core`)
+    for (const t of texts(j)) if (titleKey(t) === titleKey(j.title)) problems.push(`alternate title "${t}" repeats the title`)
+    if (problems.length) {
+      errors++
+      console.log(`INCONSISTENT journal ${j.posi_id}: ${problems.join('; ')}`)
+    }
+  }
+  console.log(`Checked titles of ${count} Core Collection journals`)
+} catch (e) { console.log('core-collection title check skipped:', e.message) }
 
 // journals/discovered/*.jsonl
 try {
@@ -99,6 +141,7 @@ try {
   let count = 0
   for (const f of files) {
     const arr = JSON.parse(readFileSync(f, 'utf-8'))
+    if (!Array.isArray(arr)) continue // edition summaries, not per-journal ranking records
     for (const obj of arr) {
       const valid = validateRanking(obj)
       count++
