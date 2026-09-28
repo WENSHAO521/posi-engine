@@ -40,10 +40,11 @@ of all items of the same PSC field, publication year and document type,
 falling back to field × year when that group has fewer than 50 items
 (`src/pnci.mjs`; [PNCI-1.0-SPEC.md](https://github.com/WENSHAO521/posi-data/blob/master/PNCI-1.0-SPEC.md)).
 
-## The monthly global cycle
+## The yearly global cycle
 
-`.github/workflows/global-index.yml` runs on the 1st–3rd of each month and
-resumes where it stopped (state in the actions cache):
+`.github/workflows/global-index.yml` builds the ranking once a year: it runs
+on the 1st–3rd of December, so the edition is published at the start of
+December, and resumes where it stopped (state in the actions cache):
 
 | Stage | What | Script |
 |---|---|---|
@@ -62,6 +63,13 @@ edition and summaries; posi-data's `import-global-index` workflow imports it.
 category, rank, percentile or quartile; a 50+ category without official
 zones; a quartile or zone that disagrees with its percentile; tied PNCI values
 with different ranks.
+
+New journals do not wait for December: `.github/workflows/journal-directory.yml`
+runs on the 4th–6th of every month (`scripts/global/refresh-directory.mjs`),
+harvests the journal lists again and releases `journals-<YYYY-MM>` with the
+corpus and OpenAlex profiles only. The site uses the newest `journals-*` or
+`global-index-*` release; posi-data imports only `global-index-*` rankings.
+A month whose corpus a `global-index-*` release already carries is skipped.
 
 Workflow inputs: `pnci_backfill` reopens the current cycle, refetches the
 journals whose results predate PNCI-1.0 and rebuilds the rankings;

@@ -3,15 +3,19 @@ name: Global index and rankings
 # Automated GLOBAL-INDEX-1.0 cycle (posi-data/GLOBAL-INDEX-1.0-SPEC.md):
 # harvest every Crossref and OpenAlex journal, compute PCS-1.0 for each, build
 # the POSI Citation Ranking edition (PNCI-1.0, CITATION-RANK-1.0) and the PCS
-# edition, once a month.
+# edition, once a year: the ranking is published at the start of December.
 #
-# Schedule: runs on the 1st, 2nd and 3rd of each month. The 1st starts the
-# month's cycle and normally finishes it (16 PCS shards take about an hour
+# Schedule: runs on the 1st, 2nd and 3rd of December. The 1st starts the
+# year's cycle and normally finishes it (16 PCS shards take about an hour
 # for ~158,000 journals); the 2nd and 3rd only resume a cycle that did not
-# finish, and otherwise exit within minutes. A new cycle starts when the
-# last one is at least 20 days old, i.e. on the next month's 1st. (The
-# actions cache drops entries unused for 7 days, so a cycle must finish
-# within these three days; between months the work directory starts fresh.)
+# finish, and otherwise exit within minutes. (The actions cache drops entries
+# unused for 7 days, so a cycle must finish within these three days, or be
+# finished by hand within a week; a year later the work directory starts
+# fresh.) Run it by hand (workflow_dispatch) to resume or rerun outside
+# December, e.g. a PNCI backfill.
+#
+# New journals are not held back to December: journal-directory.yml refreshes
+# the journal corpus and profiles every month (releases journals-<YYYY-MM>).
 #
 # Each run has three jobs:
 #   prepare  advances harvest and corpus (resumable), releases the corpus
@@ -37,7 +41,7 @@ name: Global index and rankings
 
 on:
   schedule:
-    - cron: '30 1 1-3 * *'   # 1st-3rd of each month, 01:30 UTC
+    - cron: '30 1 1-3 12 *'   # 1st-3rd of December, 01:30 UTC: the yearly ranking
   workflow_dispatch:
     inputs:
       limit:
@@ -80,17 +84,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # One ranking a year: a scheduled December run does nothing when this
+      # year's Citation Ranking edition is already released (2026's came out
+      # on 28 September, at the start of official operation). Runs by hand are
+      # never skipped.
+      - name: Skip if this year's ranking is released
+        id: year
+        run: |
+          set -euo pipefail
+          YEAR=$(date -u +%Y)
+          SKIP=false
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            for t in $(gh release list --limit 30 --json tagName -q '.[].tagName' | grep "^global-index-$YEAR-" || true); do
+              if gh release view "$t" --json assets -q '.assets[].name' | grep -qx 'citation-ranking-summary.json'; then
+                echo "The $YEAR ranking is released ($t); nothing to do"; SKIP=true; break
+              fi
+            done
+          fi
+          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@v4
+        if: steps.year.outputs.skip != 'true'
         with:
           node-version: '20'
 
       - name: Check out posi-data (read only, for curated records)
+        if: steps.year.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           repository: WENSHAO521/posi-data
           path: posi-data
 
       - name: Restore work directory
+        if: steps.year.outputs.skip != 'true'
         uses: actions/cache/restore@v4
         with:
           path: work
@@ -101,6 +127,7 @@ jobs:
       # counts what is done (and moves on to ranking when everything is).
       - name: Advance the cycle
         id: cycle
+        if: steps.year.outputs.skip != 'true'
         env:
           POSI_MAILTO: posi@panorama-sg.com
           OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
@@ -111,7 +138,7 @@ jobs:
             --curated posi-data/corpus/global-benchmark.json \
             --taxonomy posi-data/taxonomy/psc/v1.0.json \
             --budget-minutes 320 \
-            --cycle-days 20 \
+            --cycle-days 300 \
             --no-pcs-fetch \
             ${{ inputs.recheck_issns && '--reopen-pcs' || '' }} \
             ${{ inputs.pnci_backfill && '--reopen-pnci' || '' }} \
@@ -149,13 +176,13 @@ jobs:
         if: steps.cycle.outputs.publish == 'true'
         run: node scripts/global/run-cycle.mjs --work work --mark-published
 
-      # Harvest or corpus still unfinished after the last scheduled run of the
-      # month (the finish job covers the pcs stage).
+      # Harvest or corpus still unfinished after the last scheduled run in
+      # December (the finish job covers the pcs stage).
       - name: Alert if the cycle is unfinished on the 3rd
         if: github.event_name == 'schedule' && (steps.cycle.outputs.stage == 'harvest' || steps.cycle.outputs.stage == 'corpus')
         run: |
           if [ "$(date -u +%d)" -ge 3 ]; then
-            scripts/global/alert.sh "The cycle is not finished after the last scheduled run of the month (stage: ${{ steps.cycle.outputs.stage }}). Run the workflow by hand within 7 days to finish it from the cached progress."
+            scripts/global/alert.sh "The yearly cycle is not finished after the last scheduled run in December (stage: ${{ steps.cycle.outputs.stage }}). Run the workflow by hand within 7 days to finish it from the cached progress."
           fi
 
       - name: Alert on failure
@@ -163,7 +190,7 @@ jobs:
         run: scripts/global/alert.sh "The ${{ github.job }} job failed."
 
       - name: Save work directory
-        if: always()
+        if: always() && steps.year.outputs.skip != 'true'
         uses: actions/cache/save@v4
         with:
           path: work
@@ -293,7 +320,7 @@ jobs:
         if: steps.cycle.outputs.publish != 'true' && github.event_name == 'schedule' && steps.cycle.outcome == 'success'
         run: |
           if [ "$(date -u +%d)" -ge 3 ]; then
-            scripts/global/alert.sh "The cycle is not finished after the last scheduled run of the month (stage: ${{ steps.cycle.outputs.stage }}). Run the workflow by hand within 7 days to finish it from the cached progress."
+            scripts/global/alert.sh "The yearly cycle is not finished after the last scheduled run in December (stage: ${{ steps.cycle.outputs.stage }}). Run the workflow by hand within 7 days to finish it from the cached progress."
           fi
 
       - name: Alert on failure
