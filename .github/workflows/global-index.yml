@@ -60,6 +60,14 @@ on:
         description: 'Release the edition even if its quality check fails (after reviewing the report)'
         type: boolean
         default: false
+      continuation:
+        description: 'Set by automatic continuation runs (scripts/global/continue-run.sh); leave at 0'
+        required: false
+        default: '0'
+      prev_progress:
+        description: 'Set by automatic continuation runs; leave empty'
+        required: false
+        default: ''
 
 concurrency:
   group: global-index
@@ -68,6 +76,7 @@ concurrency:
 permissions:
   contents: write   # releases on this repository
   issues: write     # alerts
+  actions: write    # start the next run when one stops with work left
 
 env:
   SHARDS: 16
@@ -195,6 +204,19 @@ jobs:
         with:
           path: work
           key: global-index-${{ github.run_id }}-prepare
+
+      # Harvest or corpus stopped at the time budget: start the next run now
+      # instead of waiting for the next schedule. Capped, since harvest
+      # progress is not measured here.
+      - name: Continue automatically
+        if: always() && steps.cycle.outcome == 'success' && (steps.cycle.outputs.stage == 'harvest' || steps.cycle.outputs.stage == 'corpus')
+        env:
+          CONTINUATION: ${{ inputs.continuation || '0' }}
+          PROGRESS: ${{ steps.cycle.outputs.stage }}
+          SAME_OK: 'true'
+          MAX_CONTINUATIONS: '4'
+          EXTRA_INPUTS: ${{ inputs.limit && format('limit={0}', inputs.limit) || '' }}
+        run: scripts/global/continue-run.sh global-index.yml "The global index cycle (stage ${{ steps.cycle.outputs.stage }})"
 
   pcs:
     needs: prepare
@@ -333,3 +355,22 @@ jobs:
         with:
           path: work
           key: global-index-${{ github.run_id }}
+
+      # PCS shards stopped at their time budget with journals left (or the
+      # rank stage has yet to run): start the next run, which resumes from
+      # the work directory saved above. Only after a run that raised the
+      # number of journals done, and at most 12 times in a row; otherwise
+      # an alert. The reopen inputs are not passed on (the cycle is already
+      # open); recheck, force and limit are.
+      - name: Continue automatically
+        if: always() && steps.cycle.outcome == 'success' && steps.cycle.outputs.publish != 'true' && (steps.cycle.outputs.stage == 'pcs' || steps.cycle.outputs.stage == 'rank')
+        env:
+          CONTINUATION: ${{ inputs.continuation || '0' }}
+          PROGRESS: ${{ steps.cycle.outputs.stage }}:${{ steps.cycle.outputs.pcs_done }}
+          PREV_PROGRESS: ${{ inputs.prev_progress || '' }}
+          MAX_CONTINUATIONS: '12'
+          EXTRA_INPUTS: >-
+            ${{ inputs.recheck_issns && 'recheck_issns=true' || '' }}
+            ${{ inputs.force_release && 'force_release=true' || '' }}
+            ${{ inputs.limit && format('limit={0}', inputs.limit) || '' }}
+        run: scripts/global/continue-run.sh global-index.yml "The global index cycle (stage ${{ steps.cycle.outputs.stage }})"

@@ -71,6 +71,11 @@ corpus and OpenAlex profiles only. The site uses the newest `journals-*` or
 `global-index-*` release; posi-data imports only `global-index-*` rankings.
 A month whose corpus a `global-index-*` release already carries is skipped.
 
+A run that stops at its time budget with work left starts the next run
+itself (`scripts/global/continue-run.sh`), which resumes from the cached work
+directory: for PCS only after a run that raised the number of journals done,
+and at most 12 runs in a row (4 for a harvest); otherwise it opens an alert.
+
 Workflow inputs: `pnci_backfill` reopens the current cycle, refetches the
 journals whose results predate PNCI-1.0 and rebuilds the rankings;
 `recheck_issns` rechecks multi-ISSN journals; `force_release` releases after a

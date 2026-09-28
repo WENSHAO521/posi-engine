@@ -156,5 +156,8 @@ log(`stage: ${state.stage}${state.pcs_progress ? ` (pcs ${state.pcs_progress.don
 output('stage', state.stage)
 output('cycle', state.cycle_id)
 output('publish', state.stage === 'ready' ? 'true' : 'false')
+// Journals with a PCS result so far; an automatic continuation run only follows
+// a run that raised it (scripts/global/continue-run.sh).
+output('pcs_done', state.pcs_progress?.done ?? 0)
 // The corpus alone is enough for the journal directory; publish it as soon as it exists.
 output('corpus_ready', existsSync(corpusFile) ? 'true' : 'false')

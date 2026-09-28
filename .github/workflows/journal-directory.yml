@@ -29,6 +29,14 @@ on:
         description: 'Run even if this month already has a corpus release'
         type: boolean
         default: false
+      continuation:
+        description: 'Set by automatic continuation runs (scripts/global/continue-run.sh); leave at 0'
+        required: false
+        default: '0'
+      prev_progress:
+        description: 'Set by automatic continuation runs; leave empty'
+        required: false
+        default: ''
 
 concurrency:
   group: journal-directory
@@ -37,6 +45,7 @@ concurrency:
 permissions:
   contents: write   # releases on this repository
   issues: write     # alerts
+  actions: write    # start the next run when one stops with work left
 
 jobs:
   refresh:
@@ -130,3 +139,18 @@ jobs:
         with:
           path: dir-work
           key: journal-directory-${{ github.run_id }}
+
+      # Stopped at the time budget with the harvest or corpus unfinished:
+      # start the next run now (it resumes from the saved work directory)
+      # rather than waiting for tomorrow's schedule. At most 4 in a row.
+      - name: Continue automatically
+        if: always() && steps.refresh.outcome == 'success' && steps.refresh.outputs.stage != 'done'
+        env:
+          CONTINUATION: ${{ inputs.continuation || '0' }}
+          PROGRESS: ${{ steps.refresh.outputs.stage }}
+          SAME_OK: 'true'
+          MAX_CONTINUATIONS: '4'
+          EXTRA_INPUTS: >-
+            ${{ inputs.force && 'force=true' || '' }}
+            ${{ inputs.limit && format('limit={0}', inputs.limit) || '' }}
+        run: scripts/global/continue-run.sh journal-directory.yml "The monthly journal directory refresh (stage ${{ steps.refresh.outputs.stage }})"
