@@ -97,6 +97,7 @@ export function calculateCategoryBaseline(entries) {
  *   citation rate for the same metric_year — see calculateCategoryBaseline().
  * @returns {number | null}
  */
+/** @deprecated POSI-EVAL-1.0: PNCI is now the item-level PNCI-1.0 of pnci.mjs calculatePNCI(). This journal-level ratio is kept for the PJR archive only. */
 export function calculatePnci(journalRatio, categoryExpectedRatio) {
   if (journalRatio == null || !categoryExpectedRatio) return null
   return journalRatio / categoryExpectedRatio

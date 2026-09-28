@@ -58,7 +58,7 @@
  *     [--corpus <path to corpus/global-benchmark.json> --benchmark-curated-only] \
  *     --out <output dir> \
  *     [--metric-year 2026] [--limit N] [--concurrency 4] [--delay-ms 200] \
- *     [--rows 1000] [--force] [--shard i/N] [--budget-minutes M] [--recheck-issns]
+ *     [--rows 1000] [--force] [--shard i/N] [--budget-minutes M] [--recheck-issns] [--require-cells]
  *
  * PARALLEL SHARDS: --shard i/N keeps only the journals whose posi_id hashes
  * to shard i of N (stable across runs), so N machines can each take one
@@ -80,6 +80,8 @@ import { createHash } from 'crypto'
 import { fetchCrossrefWorksPage, PCS_SELECT_FIELDS, PCS_MAX_WORKS_PER_JOURNAL } from '../src/works-fetch.mjs'
 import { normalizeCrossrefWorkForPcs, isInPcsWindow, pcsWindowForMetricYear } from '../src/pcs-resolver.mjs'
 import { calculatePcs, calculatePcsCoverage, PCS_METHODOLOGY_VERSION } from '../src/pcs.mjs'
+import { isCitable } from '../src/pci.mjs'
+import { cellsFromItems } from '../src/pnci.mjs'
 import { shardFor } from '../src/sharding.mjs'
 
 function arg(name, fallback = null) {
@@ -286,6 +288,10 @@ async function processJournal(journal, { metricYear, window, rows, progressDir, 
   const excludedOutsideWindow = normalized.length - inWindow.length
 
   const pcsResult = calculatePcs(inWindow)
+  // PNCI-1.0 input (posi-data/PNCI-1.0-SPEC.md): the eligible items' citation
+  // counts by publication year and document type, as histograms. Kept in the
+  // per-journal result only; the PCS subset below is unchanged.
+  const cells = cellsFromItems(inWindow.filter(isCitable))
   const enumeratedCount = fetchResult.totalResults
   const coverage = calculatePcsCoverage(fetchResult.rawItems.length, enumeratedCount)
 
@@ -299,6 +305,7 @@ async function processJournal(journal, { metricYear, window, rows, progressDir, 
     pcs_coverage: coverage, excluded_outside_window: excludedOutsideWindow,
     pcs_source: 'crossref', pcs_source_retrieved_at: new Date().toISOString().slice(0, 10),
     pcs_methodology_version: PCS_METHODOLOGY_VERSION,
+    cells,
     note: fetchResult.status !== 200
       ? `partial fetch -- pagination stopped early (status=${fetchResult.status} error=${fetchResult.error}); pcs_coverage reflects the real shortfall, not a completed fetch`
       : null,
@@ -373,6 +380,9 @@ async function main() {
   const force = flag('force')
   const benchmarkCuratedOnly = flag('benchmark-curated-only')
   const recheckIssns = flag('recheck-issns')
+  // --require-cells: a journal finished before PNCI-1.0 (a result with works
+  // but no per-item `cells`) is fetched again, so PNCI can be computed for it.
+  const requireCells = flag('require-cells')
   const shardArg = arg('shard')
   const [shardIndex, shardCount] = shardArg ? shardArg.split('/').map(Number) : [0, 1]
   if (!(shardCount >= 1 && shardIndex >= 0 && shardIndex < shardCount)) { console.error(`bad --shard ${shardArg} (expected i/N)`); process.exit(1) }
@@ -434,12 +444,17 @@ async function main() {
       // ISSN, before the fallback existed, is tried under its other ISSNs.
       const noWorks = done.fetch_status === 404 || (done.fetch_status === 200 && !done.enumerated_count)
       const untried = recheckIssns && noWorks && !done.issns_without_works && done.issn_queried ? issnsToTry(j, [done.issn_queried]) : []
-      if (!untried.length) {
+      const missingCells = requireCells && !done.cells && (done.pcs_eligible_items ?? 0) > 0
+      if (!untried.length && !missingCells) {
         skipped++
         return done
       }
-      skipIssns = [done.issn_queried]
-      console.log(`  recheck ${j.posi_id}: no works under ${done.issn_queried}; trying ${untried.join(', ')}`)
+      if (untried.length) {
+        skipIssns = [done.issn_queried]
+        console.log(`  recheck ${j.posi_id}: no works under ${done.issn_queried}; trying ${untried.join(', ')}`)
+      } else {
+        console.log(`  refetch ${j.posi_id}: no per-item cells for PNCI-1.0`)
+      }
     }
     let result
     try {
