@@ -77,7 +77,7 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, unlinkSync, rmSync } from 'fs'
 import { resolve, join } from 'path'
 import { createHash } from 'crypto'
-import { fetchCrossrefWorksPage, PCS_SELECT_FIELDS, PCS_MAX_WORKS_PER_JOURNAL } from '../src/works-fetch.mjs'
+import { fetchCrossrefWorksPage, crossrefRequestStats, PCS_SELECT_FIELDS, PCS_MAX_WORKS_PER_JOURNAL } from '../src/works-fetch.mjs'
 import { normalizeCrossrefWorkForPcs, isInPcsWindow, pcsWindowForMetricYear } from '../src/pcs-resolver.mjs'
 import { calculatePcs, calculatePcsCoverage, PCS_METHODOLOGY_VERSION } from '../src/pcs.mjs'
 import { isCitable } from '../src/pci.mjs'
@@ -369,6 +369,7 @@ async function runPool(items, fn, concurrency, deadline) {
 }
 
 async function main() {
+  const startedAt = Date.now()
   const corpusPaths = args('corpus').filter(Boolean)
   const outDir = resolve(arg('out', 'pcs-etl-output'))
   const limit = arg('limit') ? parseInt(arg('limit'), 10) : null
@@ -518,6 +519,12 @@ async function main() {
       const withCoverage = results.filter(r => r.pcs_coverage != null)
       return withCoverage.length > 0 ? withCoverage.reduce((s, r) => s + r.pcs_coverage, 0) / withCoverage.length : null
     })(),
+    // This run's Crossref traffic: if rate_limited is a large share of
+    // requests, the run is limited by Crossref and more shards will not help.
+    crossref_requests: crossrefRequestStats.requests,
+    crossref_rate_limited: crossrefRequestStats.rate_limited,
+    crossref_rate_limit_wait_minutes: Math.round(crossrefRequestStats.rate_limit_wait_ms / 600) / 100,
+    run_minutes: Math.round((Date.now() - startedAt) / 600) / 100,
   }
 
   writeFileSync(join(outDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8')

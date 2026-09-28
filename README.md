@@ -49,7 +49,7 @@ resumes where it stopped (state in the actions cache):
 |---|---|---|
 | harvest | OpenAlex snapshot + Crossref journal list | `scripts/global/harvest-*.mjs` |
 | corpus | merged global corpus (~158,000 journals) | `scripts/global/build-global-corpus.mjs` |
-| pcs | every eligible work of every journal, 8 shards: PCS values + per-item citation cells | `scripts/run-pcs-etl.mjs` |
+| pcs | every eligible work of every journal, 16 shards: PCS values + per-item citation cells | `scripts/run-pcs-etl.mjs` |
 | rank | Citation Ranking edition (PNCI-1.0) and PCS edition | `scripts/run-citation-ranking.mjs`, `scripts/run-pcs-q.mjs` |
 | release | quality gate, then a GitHub release | `scripts/global/check-edition.mjs`, `release-edition.sh` |
 
