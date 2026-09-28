@@ -2,7 +2,8 @@ name: Global index and rankings
 
 # Automated GLOBAL-INDEX-1.0 cycle (posi-data/GLOBAL-INDEX-1.0-SPEC.md):
 # harvest every Crossref and OpenAlex journal, compute PCS-1.0 for each, build
-# the PCS-Q ranking edition, once a month.
+# the POSI Citation Ranking edition (PNCI-1.0, CITATION-RANK-1.0) and the PCS
+# edition, once a month.
 #
 # Schedule: runs on the 1st, 2nd and 3rd of each month. The 1st starts the
 # month's cycle and normally finishes it (8 PCS shards take about two hours
@@ -45,6 +46,10 @@ on:
         default: ''
       recheck_issns:
         description: 'Reopen the current cycle and recheck journals with several ISSNs (after an ISSN-choice fix)'
+        type: boolean
+        default: false
+      pnci_backfill:
+        description: 'Reopen the current cycle and refetch journals whose PCS results predate PNCI-1.0 (per-item cells), then rebuild the rankings'
         type: boolean
         default: false
       force_release:
@@ -104,10 +109,12 @@ jobs:
             --work work \
             --curated posi-data/corpus/core-collection.json \
             --curated posi-data/corpus/global-benchmark.json \
+            --taxonomy posi-data/taxonomy/psc/v1.0.json \
             --budget-minutes 320 \
             --cycle-days 20 \
             --no-pcs-fetch \
             ${{ inputs.recheck_issns && '--reopen-pcs' || '' }} \
+            ${{ inputs.pnci_backfill && '--reopen-pnci' || '' }} \
             ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
 
       # The journal directory only needs the corpus, so it is released as soon
@@ -197,6 +204,7 @@ jobs:
             --shard ${{ matrix.shard }}/$SHARDS \
             --concurrency 4 \
             --budget-minutes 310 \
+            --require-cells \
             ${{ inputs.recheck_issns && '--recheck-issns' || '' }} \
             ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
 
@@ -230,6 +238,12 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Check out posi-data (read only, for curated records and the PSC taxonomy)
+        uses: actions/checkout@v4
+        with:
+          repository: WENSHAO521/posi-data
+          path: posi-data
+
       - name: Restore work directory
         uses: actions/cache/restore@v4
         with:
@@ -254,13 +268,13 @@ jobs:
         env:
           POSI_MAILTO: posi@panorama-sg.com
         run: |
-          node scripts/run-pcs-etl.mjs --corpus work/global-corpus.json --out work/pcs --concurrency 4 --budget-minutes 45 > retry.log 2>&1 || { tail -50 retry.log; exit 1; }
+          node scripts/run-pcs-etl.mjs --corpus work/global-corpus.json --out work/pcs --concurrency 4 --budget-minutes 45 --require-cells > retry.log 2>&1 || { tail -50 retry.log; exit 1; }
           grep -v '^\[' retry.log | tail -30 || true
           node scripts/global/summarize-pcs.mjs --pcs-dir work/pcs > /dev/null
 
       - name: Advance the cycle
         id: cycle
-        run: node scripts/global/run-cycle.mjs --work work --budget-minutes 90 --no-pcs-fetch
+        run: node scripts/global/run-cycle.mjs --work work --budget-minutes 90 --no-pcs-fetch --curated posi-data/corpus/core-collection.json --curated posi-data/corpus/global-benchmark.json --taxonomy posi-data/taxonomy/psc/v1.0.json
 
       - name: Release the ranking edition
         if: steps.cycle.outputs.publish == 'true'

@@ -1,4 +1,11 @@
 /**
+ * DEPRECATED AS A RANKING (POSI-EVAL-1.0, 2026-09-28). PCS is a supplementary
+ * independent citation indicator and determines no Citation Rank, Percentile,
+ * Quartile or POSI Zone. The PCS-Q edition is still built each cycle because
+ * it carries every journal's PCS value and identity (and keeps the archive
+ * reproducible), but its rank/percentile/quartile fields are not published as
+ * an evaluation result anywhere. The official ranking is citation-ranking.mjs.
+ *
  * PCS-Q — the PCS Quartile track. Implements posi-data/PCS-Q-1.0-SPEC.md.
  *
  * A fourth quartile track alongside E-Q, M-Q and Citation Q, with the same

@@ -1,4 +1,13 @@
 /**
+ * DEPRECATED (POSI-EVAL-1.0, 2026-09-28). E-Q and M-Q are retired: AJR is an
+ * absolute lifecycle rating (AJR Score + AJR Rating, evaluation.mjs
+ * getAJRRating()), never a quartile. The PCI-based Citation Q and the PCS-Q
+ * track are retired as rankings too: the only published quartile is the
+ * Citation Quartile of citation-ranking.mjs (PNCI-1.0 percentile within the
+ * PSC category). This module is kept so the archived editions it produced
+ * stay reproducible and percentileMidrank() keeps serving ajr-mature.mjs's
+ * internal sub-metric normalization; no pipeline publishes its quartiles.
+ *
  * E-Q / M-Q / Citation Q — three independent quartile tracks sharing one
  * ranking algorithm. Implements the "POSI Journal Evaluation & Ranking
  * Framework 1.0" rule (also stated in posi-data/AJR-SPEC.md § 5): "All
@@ -149,6 +158,7 @@ export function rankTrackCohort(cohortEntries, track, context) {
  * @param {number} metric_year
  * @returns {object[]}
  */
+/** @deprecated POSI-EVAL-1.0: AJR is not ranked into quartiles. Archive use only. */
 export function rankLifecycleTrack(entries, track, metric_year) {
   const eligible = filterRankEligibleByConfidence(entries)
   const cohorts = buildPeerCohorts(eligible)
@@ -195,6 +205,7 @@ export function rankLifecycleTrack(entries, track, metric_year) {
  * @returns {object[]} rankCategory()'s existing records, each with
  *   `quartile_label` added (e.g. "Citation Q1") and `track: 'citation'`.
  */
+/** @deprecated POSI-EVAL-1.0: use citation-ranking.mjs rankCitationEdition() (PNCI). Archive use only. */
 export function rankCitationTrack(entries, context) {
   return rankCategory(entries, context).map(r => ({
     ...r,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks a finished PCS-Q edition (check-edition.mjs) against the previous
+# Checks a finished edition (check-edition.mjs) against the previous
 # released one, then uploads it to the cycle's release (global-index-<cycle>).
 # FORCE_RELEASE=true skips the check, after someone has reviewed the report.
 # Usage: CYCLE=<cycle id> scripts/global/release-edition.sh   (from the repo root, with work/)
@@ -19,12 +19,15 @@ fi
 
 mkdir -p out
 cp work/pcs-q/pcs-q-*.json work/pcs-q/pcs-q-*.csv out/
+# POSI Citation Ranking (PNCI-1.0 / CITATION-RANK-1.0): the official ranking edition.
+cp work/citation-ranking/citation-ranking-*.json work/citation-ranking/citation-ranking-*.csv out/
+cp work/citation-ranking/summary.json out/citation-ranking-summary.json
 cp work/pcs-q/summary.json out/pcs-q-summary.json
 [ -f work/pcs/summary.json ] && cp work/pcs/summary.json out/pcs-summary.json
 cp work/cycle.json out/cycle.json
 cp edition-check.md out/edition-check.md
 tar -czf out/pcs-shards.tar.gz -C work/pcs pcs
 gh release upload "$TAG" out/* --clobber
-gh release edit "$TAG" --notes "GLOBAL-INDEX-1.0 cycle $CYCLE, posi-engine $(git rev-parse HEAD). Complete: journal corpus and PCS-Q edition.
+gh release edit "$TAG" --notes "GLOBAL-INDEX-1.0 cycle $CYCLE, posi-engine $(git rev-parse HEAD). Complete: journal corpus, Citation Ranking edition (PNCI-1.0) and the PCS edition.
 
 $(cat edition-check.md)"

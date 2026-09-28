@@ -8,6 +8,24 @@ and mints every journal's permanent `POSI-J-######` id. Reads from and writes
 back to [posi-data](https://github.com/WENSHAO521/posi-data), which is the
 canonical data store — this repo has no database of its own.
 
+> **POSI Journal Evaluation Architecture 1.0 (2026-09-28).** Five layers,
+> never mixed — see [posi-data/POSI-EVAL-1.0-SPEC.md](https://github.com/WENSHAO521/posi-data/blob/master/POSI-EVAL-1.0-SPEC.md):
+> PQF (Core Collection eligibility, not a ranking) · AJR (lifecycle rating:
+> AJR Score + AJR Rating A+ … D, no quartiles) · citation indicators (PCI,
+> PNCI, PCS) · Citation Ranking (rank, mid-rank percentile, Citation
+> Quartile, from **PNCI** within the PSC category) · POSI Zones (from the
+> same percentile). New modules: `src/evaluation.mjs` (every threshold and
+> label rule: `getAJRRating`, `getPQFStatus`, `calculateMidRank`,
+> `calculatePercentile`, `calculateCitationQuartile`, `calculatePOSIZone`,
+> `getCitationRankingStatus`), `src/pnci.mjs` (PNCI-1.0, item-level,
+> field × year × document type), `src/citation-ranking.mjs` +
+> `scripts/run-citation-ranking.mjs` (the ranking edition, built by the
+> monthly cycle) and `src/citation-ranking-check.mjs` (release gate).
+> Retired: E-Q/M-Q (`rankLifecycleTrack`), PCI Citation Q
+> (`rankCitationTrack`) and PCS-Q as a ranking (the PCS-Q edition is still
+> built as the source of PCS values). A cycle computed before PNCI-1.0 is
+> brought up to date with the workflow's `pnci_backfill` input.
+
 > **Status: implementing "POSI Journal Evaluation & Ranking Framework
 > 1.0"** (2026-08) — see [posi-data/CHANGELOG.md](https://github.com/WENSHAO521/posi-data/blob/master/CHANGELOG.md)
 > for the full list of what changed and why. The original five pipeline

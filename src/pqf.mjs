@@ -23,6 +23,12 @@
  * final public status through, and cannot accidentally leak a ranking-
  * shaped label.
  *
+ * POSI-EVAL-1.0 (2026-09-28): the published PQF status is the score band of
+ * evaluation.mjs getPQFStatus() (>= 70 Eligible, 50–69.99 Review Required,
+ * 40–49.99 Insufficient Evidence, < 40 Not Eligible). determinePqfStatus()
+ * below is the evidence pre-screen an admission review runs before a PQF
+ * score exists; it uses the same four statuses and never ranks.
+ *
  * Pure function, no I/O.
  */
 

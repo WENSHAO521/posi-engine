@@ -8,7 +8,9 @@
  *   - evidence/works/<posi_id>.json     (Crossref article-sample, Dimensions 3/4/5/6)
  * through `src/ajr-e-rerate.mjs`'s `rateJournal()`, which applies the
  * framework's own eligibility gate — never forces a score past it. Then
- * ranks every `official`-status journal into an E-Q cohort via
+ * attaches the AJR Rating (A+ … D) from each score (evaluation.mjs
+ * getAJRRating(), POSI-EVAL-1.0). Before POSI-EVAL-1.0 this step ranked every
+ * `official`-status journal into an E-Q cohort via
  * `cohort.mjs`/`quartile-tracks.mjs`'s existing confidence-gate +
  * L3>=20/L2>=20/L1>=30 fallback rules (unmodified — this script does not
  * relax or bypass them).
@@ -34,7 +36,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs'
 import { resolve, join } from 'path'
 import { rateJournal } from '../src/ajr-e-rerate.mjs'
-import { rankLifecycleTrack } from '../src/quartile-tracks.mjs'
+import { getAJRRating, AJR_RATING_VERSION } from '../src/evaluation.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -92,28 +94,15 @@ function main() {
     console.log(`[${posiId}] ${journal.title} -- lifecycle=${newRating.lifecycle_stage} rating_status=${newRating.rating_status} total=${newRating.total ?? 'n/a'} (old 1.0 total: ${oldRating?.total ?? 'n/a'})`)
   }
 
-  // --- Pass 2: E-Q ranking, only 'official'-status journals are ranking-eligible ---
-  // (AJR-SPEC.md § 6: "60-79.9% Provisional score shown, not eligible for
-  // ranking/quartile" -- provisional scores are real and shown, just never
-  // fed into a cohort ranking.)
-  const officialEntries = perJournal
-    .filter(p => p.newRating.rating_status === 'official')
-    .map(p => ({ id: p.posi_id, score: p.newRating.total, psc_category: p.journal.psc_category ?? null, psc_confidence: p.journal.psc_confidence ?? null }))
-
-  const metricYear = ratingDate.getUTCFullYear()
-  const eqResults = rankLifecycleTrack(officialEntries, 'early_stage', metricYear)
-  const eqById = new Map(eqResults.map(r => [r.journal_id, r]))
-
+  // --- Pass 2: AJR Rating (POSI-EVAL-1.0 § 3) ---
+  // AJR is an absolute lifecycle rating: AJR Score + AJR Rating (A+ … D),
+  // from the score alone via evaluation.mjs getAJRRating(). The E-Q cohort
+  // ranking that used to run here is retired; quartile/cohort fields stay
+  // null and are deprecated (kept only so older records keep one shape).
   for (const p of perJournal) {
-    const eq = eqById.get(p.posi_id)
-    if (eq) {
-      p.newRating.quartile = eq.quartile
-      p.newRating.quartile_label = eq.quartile_label
-      p.newRating.cohort_key = eq.cohort_key
-      p.newRating.cohort_level = eq.cohort_level
-      p.newRating.cohort_size = eq.cohort_size
-      p.newRating.ranking_method = eq.ranking_method
-    }
+    const hasScore = p.newRating.rating_status === 'official' || p.newRating.rating_status === 'provisional'
+    p.newRating.rating = hasScore ? getAJRRating(p.newRating.total) : null
+    p.newRating.rating_version = AJR_RATING_VERSION
   }
 
   // --- Write updated corpus (early_stage_rating replaced, everything else untouched) ---
@@ -127,10 +116,10 @@ function main() {
   // --- Report ---
   const statusCounts = {}
   for (const p of perJournal) statusCounts[p.newRating.rating_status] = (statusCounts[p.newRating.rating_status] ?? 0) + 1
-  const quartileCounts = {}
+  const ratingCounts = {}
   for (const p of perJournal) {
-    const q = p.newRating.quartile_label ?? (p.newRating.rating_status === 'official' ? 'official_but_no_cohort' : 'n/a')
-    quartileCounts[q] = (quartileCounts[q] ?? 0) + 1
+    const q = p.newRating.rating ?? 'n/a'
+    ratingCounts[q] = (ratingCounts[q] ?? 0) + 1
   }
   const scoreDeltas = perJournal
     .filter(p => p.newRating.total != null && p.oldRating?.total != null)
@@ -140,21 +129,21 @@ function main() {
     input_journals: journals.length,
     rating_date: ratingDate.toISOString().slice(0, 10),
     rating_status_counts: statusCounts,
-    quartile_label_counts: quartileCounts,
+    ajr_rating_counts: ratingCounts,
     official_cohort_eligible_count: officialEntries.length,
     journals_with_both_1_0_and_1_1_totals: scoreDeltas.length,
     mean_score_delta: scoreDeltas.length > 0 ? Math.round((scoreDeltas.reduce((s, d) => s + d.delta, 0) / scoreDeltas.length) * 100) / 100 : null,
   }
   writeFileSync(join(outReportPath, 'rerate-summary.json'), JSON.stringify(summary, null, 2), 'utf-8')
   writeFileSync(join(outReportPath, 'per-journal-comparison.csv'),
-    ['posi_id,title,old_1_0_total,old_1_0_eligibility,new_lifecycle_stage,new_rating_status,new_1_1_total,delta,evidence_coverage,quartile_label,not_rateable_reason']
+    ['posi_id,title,old_1_0_total,old_1_0_eligibility,new_lifecycle_stage,new_rating_status,new_1_1_total,delta,evidence_coverage,ajr_rating,not_rateable_reason']
       .concat(perJournal.map(p => {
         const r = p.newRating
         const delta = (r.total != null && p.oldRating?.total != null) ? Math.round((r.total - p.oldRating.total) * 100) / 100 : ''
         const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
         return [
           p.posi_id, esc(p.journal.title), p.oldRating?.total ?? '', p.oldRating?.eligibility ?? '',
-          r.lifecycle_stage, r.rating_status, r.total ?? '', delta, r.evidence_coverage ?? '', r.quartile_label ?? '', esc(r.not_rateable_reason),
+          r.lifecycle_stage, r.rating_status, r.total ?? '', delta, r.evidence_coverage ?? '', r.rating ?? '', esc(r.not_rateable_reason),
         ].join(',')
       }))
       .join('\n'),

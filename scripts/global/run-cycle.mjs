@@ -8,7 +8,9 @@
  *   harvest  -> OpenAlex journals (public snapshot) + Crossref journal list (resumable cursor)
  *   corpus   -> merged global corpus
  *   pcs      -> PCS-1.0 for every journal (run-pcs-etl.mjs, resumable)
- *   rank     -> PCS-Q edition (run-pcs-q.mjs)
+ *   rank     -> Citation Ranking edition (run-citation-ranking.mjs: PNCI-1.0,
+ *               CITATION-RANK-1.0, POSI-ZONES-2.0) and the legacy PCS-Q edition
+ *               (run-pcs-q.mjs, kept for PCS values and the archive; not a ranking)
  *   ready    -> edition built; the workflow publishes it, then --mark-published
  *   published-> a new cycle starts once --cycle-days have passed
  *
@@ -16,6 +18,8 @@
  *     [--budget-minutes 330] [--cycle-days 30] [--concurrency 4] [--limit N] [--no-pcs-fetch]
  *
  * --reopen-pcs: take a built or published cycle back to the pcs stage.
+ * --reopen-pnci: the same, for a cycle whose PCS results predate PNCI-1.0:
+ * the pcs shards then run with --require-cells and refetch those journals.
  * --no-pcs-fetch: in the pcs stage, only count the journals already done
  * and advance when all are. The workflow uses it when PCS runs as parallel
  * shards (run-pcs-etl.mjs --shard i/N) whose results it merges into <work>/pcs.
@@ -32,12 +36,14 @@ import { arg, flag } from './lib.mjs'
 const all = name => { const o = []; for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === `--${name}`) o.push(process.argv[i + 1]); return o }
 const work = resolve(arg('work', 'work'))
 const curated = all('curated')
+const taxonomy = all('taxonomy')
 const budgetMs = Number(arg('budget-minutes', 330)) * 60_000
 const cycleDays = Number(arg('cycle-days', 30))
 const concurrency = arg('concurrency', '4')
 const limit = arg('limit')
 const noPcsFetch = flag('no-pcs-fetch')
-const reopenPcs = flag('reopen-pcs')
+const reopenPnci = flag('reopen-pnci')
+const reopenPcs = flag('reopen-pcs') || reopenPnci
 const deadline = Date.now() + budgetMs
 const engineDir = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -80,7 +86,8 @@ const remaining = () => deadline - Date.now()
 if (reopenPcs && ['rank', 'ready', 'published'].includes(state.stage)) {
   state.stage = 'pcs'
   delete state.published_at
-  state.history.push({ at: new Date().toISOString(), stage: 'pcs', note: 'reopened for a PCS recheck' })
+  if (reopenPnci) state.require_cells = true
+  state.history.push({ at: new Date().toISOString(), stage: 'pcs', note: reopenPnci ? 'reopened to fetch per-item cells for PNCI-1.0' : 'reopened for a PCS recheck' })
   save()
   log('reopened at the pcs stage')
 }
@@ -92,6 +99,7 @@ const corpusFile = join(work, 'global-corpus.json')
 const issnMapFile = join(work, 'openalex-issn-map.json')
 const pcsDir = join(work, 'pcs')
 const rankDir = join(work, 'pcs-q')
+const citationDir = join(work, 'citation-ranking')
 const lim = limit ? ['--limit', limit] : []
 
 if (state.stage === 'harvest') {
@@ -119,15 +127,28 @@ if (state.stage === 'pcs' && remaining() > 60_000) {
   const files = new Set(existsSync(join(pcsDir, 'journals')) ? readdirSync(join(pcsDir, 'journals')) : [])
   const total = ids.size
   let done = 0
-  for (const id of ids) if (files.has(`${id}.json`)) done++
+  // After --reopen-pnci a result without per-item cells is not done yet.
+  const needsCells = state.require_cells
+  for (const id of ids) {
+    if (!files.has(`${id}.json`)) continue
+    if (needsCells) {
+      const r = JSON.parse(readFileSync(join(pcsDir, 'journals', `${id}.json`), 'utf-8'))
+      if (!r.cells && (r.pcs_eligible_items ?? 0) > 0) continue
+    }
+    done++
+  }
   state.pcs_progress = { done, total }
   // A cycle reopened in this call stays at pcs until the recheck has run.
   if (done >= total && !reopenPcs) { state.stage = 'rank'; step('pcs', `complete ${done}/${total}`) } else step('pcs', `progress ${done}/${total}`)
 }
 
 if (state.stage === 'rank') {
-  const code = await run('scripts/run-pcs-q.mjs', ['--pcs-dir', pcsDir, '--corpus', corpusFile, '--out', rankDir])
-  if (code === 0) { state.stage = 'ready'; step('rank', 'edition built') }
+  const legacy = await run('scripts/run-pcs-q.mjs', ['--pcs-dir', pcsDir, '--corpus', corpusFile, '--out', rankDir])
+  const code = legacy === 0 ? await run('scripts/run-citation-ranking.mjs', [
+    '--pcs-dir', pcsDir, '--corpus', corpusFile, ...curated.flatMap(c => ['--corpus', resolve(c)]),
+    ...taxonomy.flatMap(t => ['--taxonomy', resolve(t)]), '--out', citationDir, '--snapshot-date', today,
+  ]) : 1
+  if (code === 0) { state.stage = 'ready'; delete state.require_cells; step('rank', 'citation ranking and PCS editions built') }
 }
 
 save()
