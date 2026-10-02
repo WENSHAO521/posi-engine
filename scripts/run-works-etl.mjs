@@ -106,7 +106,13 @@ async function processJournal(journal, { concurrency, delayMs, doiCheckCount, ra
     }
   }
 
-  const allArticles = excludeFutureWorks(fetchResult.items.map(normalizeCrossrefWork), ratingDate)
+  const fetched = fetchResult.items.map(normalizeCrossrefWork)
+  const allArticles = excludeFutureWorks(fetched, ratingDate)
+  // Crossref's total counts the future-dated works too. They sort first
+  // (most recent first), so every one of them is among the fetched works
+  // and can be taken off the total exactly.
+  const futureCount = fetched.length - allArticles.length
+  const totalResults = fetchResult.totalResults == null ? null : Math.max(0, fetchResult.totalResults - futureCount)
   const sample = selectArticleSample(allArticles, { target: TARGET_ARTICLE_SAMPLE_SIZE })
   const sampleAdequacy = assessArticleSampleAdequacy(sample)
 
@@ -130,7 +136,7 @@ async function processJournal(journal, { concurrency, delayMs, doiCheckCount, ra
 
   return {
     posi_id: journal.posi_id, journal_code: journal.journal_code, title: journal.title,
-    issn_queried: issn, crossref_status: 200, total_results: fetchResult.totalResults, works_fetched: allArticles.length,
+    issn_queried: issn, crossref_status: 200, total_results: totalResults, works_fetched: allArticles.length,
     article_sample: sample, sample_adequacy: sampleAdequacy,
     infrastructure_item_statuses: infrastructureItemStatuses,
     doi_resolution_checks: doiChecks, oai_pmh_check: oaiPmhCheck,
