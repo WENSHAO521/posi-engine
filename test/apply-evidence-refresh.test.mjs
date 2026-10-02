@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { reachedSource } from '../scripts/apply-evidence-refresh.mjs'
+import { reachedSource, shouldReplace } from '../scripts/apply-evidence-refresh.mjs'
 
 test('reachedSource: site crawl counts as reached when any page came back ok', () => {
   assert.equal(reachedSource('journals', { fetched_pages: [{ fetch_status: 'not_found' }, { fetch_status: 'ok' }] }), true)
@@ -25,4 +25,17 @@ test('reachedSource: output history needs the OpenAlex record read', () => {
 
 test('reachedSource: unknown kind throws', () => {
   assert.throws(() => reachedSource('publishers', {}))
+})
+
+test('shouldReplace: a crawl cut short by its host never replaces a stored complete one', () => {
+  // Real case (2026-10 rerate): two timeouts on one journal's site dropped
+  // its coverage to 48% and its rating to not_rateable.
+  const ok = { fetch_status: 'ok' }
+  const partial = { fetched_pages: [ok], evidence_snapshot_status: 'partial_source_unavailable' }
+  const complete = { fetched_pages: [ok], evidence_snapshot_status: 'complete' }
+  assert.equal(shouldReplace('journals', partial, complete), false)
+  assert.equal(shouldReplace('journals', partial, { ...partial }), true)
+  assert.equal(shouldReplace('journals', complete, partial), true)
+  assert.equal(shouldReplace('journals', partial, null), true)
+  assert.equal(shouldReplace('journals', { fetched_pages: [{ fetch_status: 'timeout' }] }, partial), false)
 })

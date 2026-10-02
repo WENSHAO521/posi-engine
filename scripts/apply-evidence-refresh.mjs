@@ -12,7 +12,10 @@
  *   - journals: at least one fetched page came back 'ok';
  *   - works:    the Crossref fetch returned 200;
  *   - output:   the OpenAlex source record was read (counts_by_year set).
- * A journal with no stored snapshot always takes the fresh one.
+ * A journal with no stored snapshot always takes the fresh one. A site
+ * crawl that was cut short by its host (evidence_snapshot_status
+ * partial_source_unavailable) never replaces a stored complete one: a few
+ * timeouts on the day must not turn a rated journal not-rateable.
  *
  * Exits 1, applying nothing, when no fresh file at all reached its source
  * (the run itself was broken), so the scheduled rerate stops instead of
@@ -31,6 +34,20 @@ export function reachedSource(kind, result) {
   if (kind === 'works') return result?.crossref_status === 200
   if (kind === 'output') return result?.counts_by_year != null
   throw new Error(`unknown evidence kind: ${kind}`)
+}
+
+/**
+ * Whether a fresh snapshot replaces the stored one.
+ * @param {string} kind
+ * @param {object} fresh
+ * @param {object|null} stored - null when nothing is stored yet
+ */
+export function shouldReplace(kind, fresh, stored) {
+  if (!stored) return true
+  if (!reachedSource(kind, fresh)) return false
+  if (kind === 'journals' && fresh.evidence_snapshot_status === 'partial_source_unavailable'
+    && stored.evidence_snapshot_status === 'complete') return false
+  return true
 }
 
 function arg(name) {
@@ -52,13 +69,13 @@ function main() {
   mkdirSync(to, { recursive: true })
   let replaced = 0, added = 0
   const kept = []
-  for (const { file, raw, reached } of fresh) {
+  for (const { file, raw } of fresh) {
     const target = join(to, file)
     if (!existsSync(target)) { writeFileSync(target, raw, 'utf-8'); added++; continue }
-    if (reached) { writeFileSync(target, raw, 'utf-8'); replaced++; continue }
+    if (shouldReplace(kind, JSON.parse(raw), JSON.parse(readFileSync(target, 'utf-8')))) { writeFileSync(target, raw, 'utf-8'); replaced++; continue }
     kept.push(file.replace(/\.json$/, ''))
   }
-  console.log(`${kind}: ${replaced} replaced, ${added} added, ${kept.length} kept (source not reached)${kept.length ? ': ' + kept.join(', ') : ''}`)
+  console.log(`${kind}: ${replaced} replaced, ${added} added, ${kept.length} kept (source not reached, or cut short where a complete crawl is stored)${kept.length ? ': ' + kept.join(', ') : ''}`)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
