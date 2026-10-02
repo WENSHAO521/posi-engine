@@ -28,6 +28,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'fs'
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import { evidenceSnapshotStatus } from '../src/evidence-fetch.mjs'
 
 export function reachedSource(kind, result) {
   if (kind === 'journals') return (result?.fetched_pages ?? []).some(p => p.fetch_status === 'ok')
@@ -46,8 +47,14 @@ export function shouldReplace(kind, fresh, stored) {
   if (!stored) return true
   if (!reachedSource(kind, fresh)) return false
   if (kind === 'journals' && fresh.evidence_snapshot_status === 'partial_source_unavailable'
-    && stored.evidence_snapshot_status === 'complete') return false
+    && storedStatus(stored) === 'complete' && reachedSource('journals', stored)) return false
   return true
+}
+
+// A snapshot written before evidence_snapshot_status existed: infer it from
+// its page statuses.
+function storedStatus(stored) {
+  return stored.evidence_snapshot_status ?? evidenceSnapshotStatus(stored.fetched_pages).evidence_snapshot_status
 }
 
 function arg(name) {

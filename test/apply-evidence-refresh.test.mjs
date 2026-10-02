@@ -39,3 +39,15 @@ test('shouldReplace: a crawl cut short by its host never replaces a stored compl
   assert.equal(shouldReplace('journals', partial, null), true)
   assert.equal(shouldReplace('journals', { fetched_pages: [{ fetch_status: 'timeout' }] }, partial), false)
 })
+
+test('shouldReplace: a stored snapshot without the status field is judged by its pages', () => {
+  const partial = { fetched_pages: [{ fetch_status: 'ok' }], evidence_snapshot_status: 'partial_source_unavailable' }
+  assert.equal(shouldReplace('journals', partial, { fetched_pages: [{ url: 'https://a.example/', fetch_status: 'ok' }] }), false)
+  assert.equal(shouldReplace('journals', partial, { fetched_pages: [{ url: 'https://a.example/', fetch_status: 'ok' }, { url: 'https://a.example/x', fetch_status: 'timeout' }] }), true)
+})
+
+test('shouldReplace: a stored complete snapshot that never reached its source does not block a fresh partial one', () => {
+  const partial = { fetched_pages: [{ fetch_status: 'ok' }], evidence_snapshot_status: 'partial_source_unavailable' }
+  const storedForbidden = { fetched_pages: [{ url: 'https://a.example/', fetch_status: 'forbidden' }], evidence_snapshot_status: 'complete' }
+  assert.equal(shouldReplace('journals', partial, storedForbidden), true)
+})
