@@ -13,9 +13,14 @@
  * input) and a report of every journal checked (--report, JSON + CSV), and
  * prints a Markdown table of every journal not kept as it is.
  *
+ * --curated <JSON> adds hand-picked addresses ({ entries: [{ posi_id, title,
+ * url }] }, config/website-url-curated.json) as the first candidate after
+ * OpenAlex. Each must still answer, and is ignored when its title is not
+ * the corpus record's (a wrong posi_id never changes another journal).
+ *
  * Usage:
  *   node scripts/refresh-website-urls.mjs --corpus <corpus JSON> --out <corpus JSON> --report <dir>
- *     [--only-rateable] [--concurrency 8] [--limit N]
+ *     [--curated <JSON>] [--only-rateable] [--concurrency 8] [--limit N]
  *
  * --only-rateable checks only the journals AJR can rate today (Early-Stage
  * or Mature), the ones the evidence crawl visits.
@@ -115,14 +120,24 @@ async function main() {
     return { j, current, currentCheck, candidates }
   })
 
-  // Pass 2, only for journals still without a working address: Wikidata's
-  // official website, then the publisher's ISSN address.
+  const curated = new Map()
+  if (arg('curated')) {
+    for (const e of JSON.parse(readFileSync(resolve(arg('curated')), 'utf-8')).entries ?? []) {
+      const j = corpus.find(x => x.posi_id === e.posi_id)
+      if (!j || j.title !== e.title) { console.warn(`Curated ${e.posi_id} ignored: title is ${j ? JSON.stringify(j.title) : 'not in the corpus'}, not ${JSON.stringify(e.title)}`); continue }
+      curated.set(e.posi_id, e.url)
+    }
+  }
+
+  // Pass 2, only for journals still without a working address: a curated
+  // address, Wikidata's official website, then the publisher's ISSN address.
   const stuck = first.filter(r => ['dead_no_replacement', 'missing_no_replacement'].includes(decideWebsiteUrl(r).action))
   const wd = stuck.length ? await wikidataSites([...new Set(stuck.flatMap(r => issnsOf(r.j)))]) : new Map()
   console.log(`Second pass: ${stuck.length} journals; Wikidata has a website for ${stuck.filter(r => issnsOf(r.j).some(i => wd.has(i))).length}`)
   await pool(stuck, Number(arg('concurrency', '8')), async r => {
     const seen = new Set(r.candidates.map(c => c.url))
     const more = [
+      ...(curated.has(r.j.posi_id) ? [{ url: curated.get(r.j.posi_id), source: 'curated' }] : []),
       ...[...new Set(issnsOf(r.j).flatMap(i => wd.get(i) ?? []))].map(url => ({ url, source: 'wikidata', strict: true })),
       ...publisherRewrites(r.j).map(url => ({ url, source: 'publisher_rewrite', strict: true })),
     ].filter(c => !seen.has(c.url) && seen.add(c.url))

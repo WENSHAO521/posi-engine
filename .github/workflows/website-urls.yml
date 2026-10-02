@@ -3,7 +3,8 @@ name: Refresh website URLs
 # Finds corpus records whose website_url no longer leads anywhere (or that
 # have none) and replaces them with the first candidate that answers: the
 # journal's OpenAlex homepage_url, its Wikidata official website (by ISSN),
-# or Wiley's ISSN address (scripts/refresh-website-urls.mjs). Run by hand before a
+# or Wiley's ISSN address, with hand-picked addresses from
+# config/website-url-curated.json tried first (scripts/refresh-website-urls.mjs). Run by hand before a
 # large evidence crawl. The change arrives as a pull request on posi-data
 # (branch website-urls/<date>-<corpus>-<run id>) with the full report in its run's artifact
 # and the job summary;
@@ -56,7 +57,7 @@ jobs:
           FLAG=""; [ "$ONLY_RATEABLE" = "true" ] && FLAG="--only-rateable"
           node scripts/refresh-website-urls.mjs \
             --corpus "posi-data/$CORPUS" --out "posi-data/$CORPUS" \
-            --report work/website-urls $FLAG
+            --curated config/website-url-curated.json --report work/website-urls $FLAG
           cat work/website-urls/website-urls.md >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
@@ -89,7 +90,7 @@ jobs:
             const changed = r.rows.filter(x => x.action === "add" || x.action === "replace")
             const dead = r.rows.filter(x => x.action === "dead_no_replacement")
             const lines = [
-              `Website URLs refreshed (OpenAlex homepage_url, Wikidata official website by ISSN, Wiley ISSN address) by posi-engine [refresh-website-urls](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}).`,
+              `Website URLs refreshed (OpenAlex homepage_url, curated list, Wikidata official website by ISSN, Wiley ISSN address) by posi-engine [refresh-website-urls](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}).`,
               "", "```json", JSON.stringify(r.counts, null, 2), "```", "",
               `### Changed (${changed.length})`, "", "| Journal | Was | Now | Source | Why |", "|---|---|---|---|---|",
               ...changed.map(x => `| ${x.posi_id} ${x.title} | ${x.current ?? "–"} | ${x.url} | ${x.source} | ${x.reason} |`),
