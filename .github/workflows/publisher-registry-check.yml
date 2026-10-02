@@ -1,0 +1,47 @@
+name: Publisher registry check
+
+# Checks posi-data's publisher evidence registry (evidence/publishers,
+# AJR-SPEC.md § 8): whether every entry's evidence_url still answers and
+# which entries are verified or still drafts the ETL ignores
+# (scripts/check-publisher-registry.mjs). Read only; the table is the job
+# summary. posi_data_ref lets a registry pull request be checked before it
+# merges.
+
+on:
+  workflow_dispatch:
+    inputs:
+      posi_data_ref:
+        description: 'posi-data branch or commit to check'
+        default: 'master'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check out posi-data (read only)
+        uses: actions/checkout@v4
+        with:
+          repository: WENSHAO521/posi-data
+          ref: ${{ inputs.posi_data_ref }}
+          path: posi-data
+
+      - name: Check the registry
+        run: |
+          node scripts/check-publisher-registry.mjs --registry posi-data/evidence/publishers \
+            --out work/publisher-registry-check.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publisher-registry-check
+          path: work/

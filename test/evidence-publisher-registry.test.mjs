@@ -86,5 +86,27 @@ test('INHERITABLE_CRITERION_IDS matches evidence-resolver.mjs\'s canonical AJR-E
     'corrections_retractions_policy',
     'data_availability_sharing',
     'publication_ethics_policy',
+    'plagiarism_similarity_policy',
+    'human_animal_ethics_consent',
+    'complaints_appeals',
+    'fee_disclosure',
+    'copyright_licensing',
+    'access_model_disclosure',
+    'publisher_ownership_contact',
+    'advertising_sponsorship_disclosure',
+    'other_applicable_terms',
   ].sort())
+})
+
+test('journal-specific items are never inheritable', () => {
+  for (const id of ['aims_scope_explicit', 'editorial_board_public', 'editor_identity_affiliation_verifiable',
+    'peer_review_process_disclosed', 'reviewer_editorial_guidelines', 'author_guidelines']) {
+    assert.ok(!INHERITABLE_CRITERION_IDS.includes(id), id)
+  }
+})
+
+test('applyPublisherInheritance matches a journal recorded under one of the entry\'s aliases', () => {
+  const registry = [wellFormedEntry({ publisher: 'Elsevier', publisher_aliases: ['Elsevier BV', 'Cell Press'] })]
+  assert.equal(applyPublisherInheritance(baseItems, 'Cell Press', registry).find(i => i.id === 'publication_ethics_policy').status, 'met')
+  assert.equal(applyPublisherInheritance(baseItems, 'Elsevier Inc', registry).find(i => i.id === 'publication_ethics_policy').status, 'unknown')
 })

@@ -17,9 +17,14 @@
 
 /** Only these criterion ids may ever be filled from a publisher-level
  * entry (AJR-SPEC.md § 8: "inheritable" list) -- inherently
- * journal-specific items (editorial board, peer-review model, aims &
- * scope, publication frequency, journal-specific APC amount) can never be
- * satisfied this way, no matter what a publisher registry entry claims.
+ * journal-specific items (aims & scope, editorial board, editor identity,
+ * peer-review process, reviewer guidelines, author guidelines, publication
+ * frequency, a journal-specific APC amount) can never be satisfied this
+ * way, no matter what a publisher registry entry claims. Since 2026-10 the
+ * list also holds the policies large publishers set for every journal at
+ * once: similarity checking, human/animal research ethics, complaints and
+ * appeals, and the transparency items (fee policy, copyright/licensing,
+ * access model, ownership/contact, advertising, other terms).
  * Ids match `evidence-resolver.mjs`'s EVIDENCE_CRITERIA (which in turn
  * match AJR-E's canonical evidence item ids) verbatim. */
 export const INHERITABLE_CRITERION_IDS = Object.freeze([
@@ -29,11 +34,21 @@ export const INHERITABLE_CRITERION_IDS = Object.freeze([
   'conflict_of_interest_policy',
   'ai_use_policy',
   'data_availability_sharing',
+  'plagiarism_similarity_policy',
+  'human_animal_ethics_consent',
+  'complaints_appeals',
+  'fee_disclosure',
+  'copyright_licensing',
+  'access_model_disclosure',
+  'publisher_ownership_contact',
+  'advertising_sponsorship_disclosure',
+  'other_applicable_terms',
 ])
 
 /**
  * @typedef {{
  *   publisher: string,
+ *   publisher_aliases?: string[], // other names the corpus records for the same publisher (imprints, legal names)
  *   policy_type: string,        // must be one of INHERITABLE_CRITERION_IDS
  *   scope: 'all_journals',
  *   evidence_url: string,       // must be a real, parseable http(s) URL
@@ -83,7 +98,7 @@ export function applyPublisherInheritance(journalItems, publisherName, registry)
   if (!publisherName || !registry?.length) return journalItems
 
   const applicableEntries = registry.filter(
-    e => e.publisher === publisherName
+    e => (e.publisher === publisherName || (Array.isArray(e.publisher_aliases) && e.publisher_aliases.includes(publisherName)))
       && e.scope === 'all_journals'
       && INHERITABLE_CRITERION_IDS.includes(e.policy_type)
       && isWellFormedEntry(e)
