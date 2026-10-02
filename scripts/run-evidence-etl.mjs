@@ -275,8 +275,15 @@ async function main() {
         evidence_methodology_version: EVIDENCE_COVERAGE_METHODOLOGY_VERSION,
         snapshot_date: new Date().toISOString().slice(0, 10),
         note: `unexpected error during crawl, isolated: ${err?.message ?? err}`,
+        // The crawl itself failed: nothing says the source is unusable, so
+        // the snapshot asks for a recrawl.
+        evidence_snapshot_status: 'partial_source_unavailable', recrawl_required: true,
+        recrawl_reason: 'crawl_error', recrawl_host: null,
       }
     }
+    // A journal with no (usable) website_url was not crawled at all: no
+    // flaky source to retry, so its snapshot is complete as it stands.
+    if (!result.evidence_snapshot_status) Object.assign(result, evidenceSnapshotStatus(result.fetched_pages))
     results.push(result)
     writeFileSync(join(journalsOutDir, `${result.posi_id ?? j.journal_code}.json`), JSON.stringify(result, null, 2), 'utf-8')
     console.log(`site evidence coverage ${result.site_evidence_coverage_percent}% (${result.fetched_pages.length} pages fetched)`)

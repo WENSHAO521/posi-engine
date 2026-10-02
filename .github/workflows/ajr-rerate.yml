@@ -94,9 +94,11 @@ jobs:
         if: inputs.skip_crawl != true
         run: |
           set -euo pipefail
+          DATE="${{ inputs.rating_date }}"
           node scripts/run-works-etl.mjs \
             --corpus posi-data/corpus/core-collection.json \
-            --out work/works
+            --out work/works \
+            ${DATE:+--rating-date "$DATE"}
           node scripts/apply-evidence-refresh.mjs --kind works \
             --from work/works/journals --to posi-data/evidence/works
 

@@ -96,7 +96,9 @@ async function processJournal(journal, { concurrency, delayMs, doiCheckCount, ra
   const issn = journalIssn(journal)
   if (!issn) return emptyResult(journal, 'no issn_online or issn_print on record -- nothing to query Crossref with')
 
-  const fetchResult = await fetchAllCrossrefWorks(issn, { concurrency, delayMs })
+  // Bounded at Crossref by the rating date, so neither the capped sample
+  // nor total-results ever counts a work published after it.
+  const fetchResult = await fetchAllCrossrefWorks(issn, { concurrency, delayMs, filter: `type:journal-article,until-pub-date:${ratingDate}` })
   if (fetchResult.status !== 200) {
     return {
       ...emptyResult(journal, fetchResult.status === 404
@@ -106,7 +108,14 @@ async function processJournal(journal, { concurrency, delayMs, doiCheckCount, ra
     }
   }
 
-  const allArticles = excludeFutureWorks(fetchResult.items.map(normalizeCrossrefWork), ratingDate)
+  const fetched = fetchResult.items.map(normalizeCrossrefWork)
+  // Defence in depth: Crossref's until-pub-date reads its own date fields,
+  // which can differ from the one normalizeCrossrefWork() picks. Works it
+  // still let through come off the total too (they sort first, so all of
+  // them are among the fetched works).
+  const allArticles = excludeFutureWorks(fetched, ratingDate)
+  const futureCount = fetched.length - allArticles.length
+  const totalResults = fetchResult.totalResults == null ? null : Math.max(0, fetchResult.totalResults - futureCount)
   const sample = selectArticleSample(allArticles, { target: TARGET_ARTICLE_SAMPLE_SIZE })
   const sampleAdequacy = assessArticleSampleAdequacy(sample)
 
@@ -130,7 +139,7 @@ async function processJournal(journal, { concurrency, delayMs, doiCheckCount, ra
 
   return {
     posi_id: journal.posi_id, journal_code: journal.journal_code, title: journal.title,
-    issn_queried: issn, crossref_status: 200, total_results: fetchResult.totalResults, works_fetched: allArticles.length,
+    issn_queried: issn, crossref_status: 200, total_results: totalResults, works_fetched: allArticles.length,
     article_sample: sample, sample_adequacy: sampleAdequacy,
     infrastructure_item_statuses: infrastructureItemStatuses,
     doi_resolution_checks: doiChecks, oai_pmh_check: oaiPmhCheck,
