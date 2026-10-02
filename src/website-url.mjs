@@ -23,6 +23,9 @@ const DEAD = new Set(['not_found', 'network_error', 'timeout'])
 export function liveness(check) {
   if (!check) return 'unknown'
   if (check.http_status === 410) return 'dead'
+  // 405: the server is there and answered, it only refuses the request
+  // method (journals.ametsoc.org answers the crawler this way).
+  if (check.http_status === 405) return 'alive'
   if (ALIVE.has(check.fetch_status)) return 'alive'
   if (DEAD.has(check.fetch_status)) return 'dead'
   return 'unknown'

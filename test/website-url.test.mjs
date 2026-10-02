@@ -16,6 +16,8 @@ test('liveness: any answer is alive, a refusal included; 404/410, DNS and timeou
   assert.equal(liveness({ fetch_status: 'http_error', http_status: 410 }), 'dead')
   assert.equal(liveness(noDns), 'dead')
   assert.equal(liveness({ fetch_status: 'timeout', http_status: null }), 'dead')
+  assert.equal(liveness({ fetch_status: 'http_error', http_status: 405 }), 'alive')
+  assert.equal(liveness({ fetch_status: 'http_error', http_status: 418 }), 'unknown')
   assert.equal(liveness(null), 'unknown')
 })
 
