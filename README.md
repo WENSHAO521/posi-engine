@@ -105,7 +105,7 @@ PCI / PCI-5 from the PCI audit, yearly output from `evidence/output/`, and
 everything else from the same evidence as AJR-E; how AJR-E's evidence items
 map onto AJR-M's is in posi-data
 [AJR-M-1.0-SPEC.md](https://github.com/WENSHAO521/posi-data/blob/master/AJR-M-1.0-SPEC.md)
-§ 12. The Core Collection has no Mature journal before December 2029.
+§ 11. The Core Collection has no Mature journal before December 2029.
 
 ## Modules
 
