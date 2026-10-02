@@ -4,6 +4,7 @@ import {
   crossrefDateToIso, normalizeCrossrefWork, selectArticleSample,
   deriveInfrastructureItemStatuses, computePublicationWindowStats,
   deriveDepositTimeliness, FREQUENCY_WINDOW_MONTHS, CONTINUITY_WINDOW_MONTHS,
+  answerStatus, excludeFutureWorks,
 } from '../src/works-resolver.mjs'
 import { INFRASTRUCTURE_ITEMS, scoreOutputSignals, scoreReachConcentration, resolveAuthorIdentity } from '../src/ajr-early-stage.mjs'
 
@@ -234,4 +235,44 @@ test('deriveDepositTimeliness: median deposit gap >90 days -> not_met', () => {
 test('deriveDepositTimeliness: no usable pairs -> unknown, never a guessed default', () => {
   assert.equal(deriveDepositTimeliness([]), 'unknown')
   assert.equal(deriveDepositTimeliness([{ publishedDate: null, depositDate: null }]), 'unknown')
+})
+
+test('deriveInfrastructureItemStatuses: oai_pmh -- a 403/429 is blocked (AJR-E-1.1 § 2), a 5xx unknown, never not_met', () => {
+  // Real regression (2026-10 rerate): six OAI endpoints answered the GitHub
+  // runner with 403 and the item flipped from met to not_met.
+  const sample = [normalizeCrossrefWork(REAL_CROSSREF_WORK)]
+  for (const [status, expected] of [[403, 'blocked'], [429, 'blocked'], [503, 'unknown'], [404, 'not_met']]) {
+    const r = deriveInfrastructureItemStatuses({ sample, doiChecks: [], oaiPmhCheck: { attempted: true, ok: false, http_status: status } })
+    assert.equal(r.oai_pmh_schema_org_machine_readable, expected, String(status))
+  }
+})
+
+test('deriveInfrastructureItemStatuses: doi.org refusing the crawler (403) is left out, not counted unresolved', () => {
+  const sample = [normalizeCrossrefWork(REAL_CROSSREF_WORK)]
+  const doiChecks = [
+    { doi: 'a', resolved: true, http_status: 302 }, { doi: 'b', resolved: true, http_status: 302 },
+    { doi: 'c', resolved: false, http_status: 403 }, { doi: 'd', resolved: false, http_status: 403 },
+  ]
+  assert.equal(deriveInfrastructureItemStatuses({ sample, doiChecks, oaiPmhCheck: null }).doi_resolution_reliability, 'met')
+  const onlyBlocked = doiChecks.slice(2)
+  assert.equal(deriveInfrastructureItemStatuses({ sample, doiChecks: onlyBlocked, oaiPmhCheck: null }).doi_resolution_reliability, 'unknown')
+})
+
+test('answerStatus: what an HTTP answer can tell', () => {
+  assert.equal(answerStatus(null), 'unknown')
+  assert.equal(answerStatus(500), 'unknown')
+  assert.equal(answerStatus(403), 'blocked')
+  assert.equal(answerStatus(429), 'blocked')
+  assert.equal(answerStatus(200), 'resolved')
+  assert.equal(answerStatus(404), 'resolved')
+})
+
+test('excludeFutureWorks: drops works published after the rating date, keeps year-only and undated ones', () => {
+  // Real regression (2026-10 rerate): works dated December 2026, deposited
+  // in September, entered the sample on 2026-10-02.
+  const works = [
+    { publishedDate: '2026-10-02' }, { publishedDate: '2026-12-03' }, { publishedDate: '2026-11' },
+    { publishedDate: '2026-10' }, { publishedDate: '2026' }, { publishedDate: null },
+  ]
+  assert.deepEqual(excludeFutureWorks(works, '2026-10-02').map(w => w.publishedDate), ['2026-10-02', '2026-10', '2026', null])
 })

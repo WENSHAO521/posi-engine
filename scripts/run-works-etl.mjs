@@ -48,7 +48,7 @@ import { resolve, join } from 'path'
 import { fetchAllCrossrefWorks, checkDoiResolution, checkOaiPmhEndpoint } from '../src/works-fetch.mjs'
 import {
   normalizeCrossrefWork, selectArticleSample, deriveInfrastructureItemStatuses,
-  computePublicationWindowStats, deriveDepositTimeliness, WORKS_RESOLVER_METHODOLOGY_VERSION,
+  computePublicationWindowStats, deriveDepositTimeliness, WORKS_RESOLVER_METHODOLOGY_VERSION, excludeFutureWorks,
 } from '../src/works-resolver.mjs'
 import { assessArticleSampleAdequacy, TARGET_ARTICLE_SAMPLE_SIZE } from '../src/ajr-early-stage.mjs'
 
@@ -106,7 +106,7 @@ async function processJournal(journal, { concurrency, delayMs, doiCheckCount, ra
     }
   }
 
-  const allArticles = fetchResult.items.map(normalizeCrossrefWork)
+  const allArticles = excludeFutureWorks(fetchResult.items.map(normalizeCrossrefWork), ratingDate)
   const sample = selectArticleSample(allArticles, { target: TARGET_ARTICLE_SAMPLE_SIZE })
   const sampleAdequacy = assessArticleSampleAdequacy(sample)
 

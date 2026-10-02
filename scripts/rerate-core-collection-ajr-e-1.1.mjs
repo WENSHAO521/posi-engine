@@ -106,9 +106,19 @@ function main() {
   }
 
   // --- Write updated corpus (early_stage_rating replaced, everything else untouched) ---
+  // Deprecated legacy fields (POSI-EVAL-1.0 § 3, migrate-evaluation-1.0.mjs)
+  // keep their recorded values and their deprecated_fields marker: the
+  // historical record is never rewritten by a rerate. article_count follows
+  // the Crossref total the refreshed article sample was drawn from.
   const updatedJournals = journals.map(j => {
     const p = perJournal.find(x => x.posi_id === j.posi_id)
-    return { ...j, early_stage_rating: p.newRating }
+    const rating = { ...p.newRating }
+    const deprecated = p.oldRating?.deprecated_fields ?? []
+    for (const f of deprecated) if (f in p.oldRating) rating[f] = p.oldRating[f]
+    if (deprecated.length) rating.deprecated_fields = deprecated
+    const works = loadJsonIfExists(join(evidenceWorksDir, `${j.posi_id}.json`))
+    const articleCount = works?.crossref_status === 200 && works.total_results != null ? works.total_results : j.article_count
+    return { ...j, ...(articleCount !== undefined ? { article_count: articleCount } : {}), early_stage_rating: rating }
   })
   const updatedCorpus = Array.isArray(corpusRaw) ? updatedJournals : { ...corpusRaw, journals: updatedJournals }
   writeFileSync(outCorpusPath, JSON.stringify(updatedCorpus, null, 2) + '\n', 'utf-8')

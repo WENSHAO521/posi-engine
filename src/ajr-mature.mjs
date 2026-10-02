@@ -43,7 +43,10 @@ import { dimensionScore } from './evidence-coverage.mjs'
 import { scoreTransparency } from './shared-dimensions.mjs'
 import { percentileMidrank } from './quartile-tracks.mjs'
 
-export const AJR_M_METHODOLOGY_VERSION = 'AJR-M-1.0'
+// AJR-M-1.1: the 1.0 formulas plus the input rules of AJR-M-1.0-SPEC.md
+// § 11 (evidence mapping, 80% structural share, 20-peer percentiles),
+// which change scores and so carry their own version.
+export const AJR_M_METHODOLOGY_VERSION = 'AJR-M-1.1'
 
 export function clamp(v, max) { return Math.max(0, Math.min(v, max)) }
 function round2(n) { return Math.round(n * 100) / 100 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyHttpStatus, classifyFetchException, isPathDisallowedByRobots, BLOCKING_STATUSES, UNKNOWN_STATUSES, CLEAN_ABSENCE_STATUSES, MAX_BODY_BYTES } from '../src/evidence-fetch.mjs'
+import { classifyHttpStatus, classifyFetchException, isPathDisallowedByRobots, BLOCKING_STATUSES, UNKNOWN_STATUSES, CLEAN_ABSENCE_STATUSES, MAX_BODY_BYTES, evidenceSnapshotStatus } from '../src/evidence-fetch.mjs'
 
 test('classifyHttpStatus: 2xx is ok, 403/404/429 are their own distinct statuses', () => {
   assert.equal(classifyHttpStatus(200), 'ok')
@@ -94,4 +94,12 @@ test('isPathDisallowedByRobots: a group\'s Disallow only applies to that group, 
 test('MAX_BODY_BYTES is a sane positive number, exported for fetchWithStatus callers to reference', () => {
   assert.equal(typeof MAX_BODY_BYTES, 'number')
   assert.ok(MAX_BODY_BYTES > 0)
+})
+
+test('evidenceSnapshotStatus: complete crawl, and a flaky host flagged for recrawl', () => {
+  assert.deepEqual(evidenceSnapshotStatus([{ url: 'https://a.example/x', fetch_status: 'ok' }, { url: 'https://a.example/y', fetch_status: 'not_found' }]),
+    { evidence_snapshot_status: 'complete', recrawl_required: false })
+  assert.deepEqual(evidenceSnapshotStatus([{ url: 'https://a.example/x', fetch_status: 'ok' }, { url: 'https://a.example/y', fetch_status: 'timeout' }]),
+    { evidence_snapshot_status: 'partial_source_unavailable', recrawl_required: true, recrawl_reason: 'source_host_intermittent_timeout', recrawl_host: 'a.example' })
+  assert.equal(evidenceSnapshotStatus([{ url: 'https://a.example/y', fetch_status: 'server_error' }]).recrawl_reason, 'source_host_errors')
 })
