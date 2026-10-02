@@ -23,7 +23,7 @@ import {
 } from '../src/ajr-mature.mjs'
 
 test('AJR_M_METHODOLOGY_VERSION is 1.0 — this model did not exist before', () => {
-  assert.equal(AJR_M_METHODOLOGY_VERSION, 'AJR-M-1.0')
+  assert.equal(AJR_M_METHODOLOGY_VERSION, 'AJR-M-1.1')
 })
 
 test('all six dimension weights sum to exactly 100', () => {
@@ -159,7 +159,7 @@ test('scoreReachConcentrationMature tiers: institution/author concentration', ()
 
 // ---- Composite ----
 
-test('computeAjrM composes all six dimensions and stamps AJR-M-1.0', () => {
+test('computeAjrM composes all six dimensions and stamps AJR-M-1.1', () => {
   const result = computeAjrM({
     citationPercentiles: { percentile_pci: 90, percentile_pci5: 90, percentile_pnci: 90 },
     outputStability: {
@@ -179,7 +179,7 @@ test('computeAjrM composes all six dimensions and stamps AJR-M-1.0', () => {
       advertising_sponsorship_disclosure: 'met', other_applicable_terms: 'met',
     },
   })
-  assert.equal(result.methodology_version, 'AJR-M-1.0')
+  assert.equal(result.methodology_version, 'AJR-M-1.1')
   assert.ok(result.total > 80, `expected a strong composite for near-max input, got ${result.total}`)
   assert.ok(result.total <= 100)
 })

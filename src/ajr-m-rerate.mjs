@@ -1,5 +1,5 @@
 /**
- * AJR-M-1.0 rerate pipeline — the AJR-M counterpart of `ajr-e-rerate.mjs`.
+ * AJR-M-1.1 rerate pipeline — the AJR-M counterpart of `ajr-e-rerate.mjs`.
  * `ajr-mature.mjs` scores already-resolved inputs (percentiles, yearly
  * output, one status per evidence item); this module resolves those inputs
  * from the data posi-data actually holds, applies the eligibility gate

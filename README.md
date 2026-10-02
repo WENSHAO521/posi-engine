@@ -113,7 +113,7 @@ map onto AJR-M's is in posi-data
 |---|---|
 | Evaluation rules | `evaluation.mjs`, `citation-ranking.mjs`, `citation-ranking-check.mjs` |
 | Citation indicators | `pnci.mjs` (PNCI-1.0), `pci.mjs` (PCI / PCI-5), `pcs.mjs` + `pcs-resolver.mjs` (PCS-1.0) |
-| Lifecycle ratings | `lifecycle.mjs`, `first-publication-date.mjs`, `ajr-early-stage.mjs` (AJR-E-1.1), `ajr-mature.mjs` (AJR-M-1.0), `ajr-e-rerate.mjs`, `ajr-m-rerate.mjs`, `shared-dimensions.mjs`, `evidence-coverage.mjs` |
+| Lifecycle ratings | `lifecycle.mjs`, `first-publication-date.mjs`, `ajr-early-stage.mjs` (AJR-E-1.1), `ajr-mature.mjs` (AJR-M-1.1), `ajr-e-rerate.mjs`, `ajr-m-rerate.mjs`, `shared-dimensions.mjs`, `evidence-coverage.mjs` |
 | Admission | `pqf.mjs` (evidence pre-screen; the public status is `getPQFStatus`) |
 | Subjects | `psc-classify.mjs` (PSC-CROSSWALK), `cohort.mjs` |
 | Integrity and diagnostics | `citation-integrity.mjs`, `diagnostics.mjs` (MQS / IRS / CVI), `international-reach.mjs`: descriptive, never blended into a score |

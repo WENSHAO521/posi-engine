@@ -169,6 +169,30 @@ function ratio(n, d) { return d > 0 ? n / d : null }
  * }} input
  * @returns {Object<string,string>} keyed by INFRASTRUCTURE_ITEMS[].id, values are evidence-coverage.mjs statuses
  */
+/**
+ * What a live check's HTTP answer can tell: 403/429 -> `blocked` (the
+ * platform refused the crawler), no answer or 5xx -> `unknown`, anything
+ * else -> `resolved` (the check's own met/not_met rule applies).
+ * @param {number|null} httpStatus
+ * @returns {'resolved'|'blocked'|'unknown'}
+ */
+export function answerStatus(httpStatus) {
+  if (httpStatus == null || httpStatus >= 500) return 'unknown'
+  if (httpStatus === 403 || httpStatus === 429) return 'blocked'
+  return 'resolved'
+}
+
+/**
+ * Drops works whose publication date is after `asOf` (YYYY-MM-DD): Crossref
+ * carries works deposited ahead of their issue date, which are not yet
+ * published on the rating date. A year-only or missing date is kept.
+ * @param {{ publishedDate: string|null }[]} articles
+ * @param {string} asOf
+ */
+export function excludeFutureWorks(articles, asOf) {
+  return articles.filter(a => !a.publishedDate || a.publishedDate.length < 7 || a.publishedDate.slice(0, asOf.length) <= asOf)
+}
+
 export function deriveInfrastructureItemStatuses({ sample, doiChecks, oaiPmhCheck }) {
   const n = sample.length
 
@@ -205,7 +229,9 @@ export function deriveInfrastructureItemStatuses({ sample, doiChecks, oaiPmhChec
   // journal's own DOIs. >=80% resolved among CHECKED dois -> met. No
   // checks attempted (e.g. no DOIs in sample at all) -> unknown, never a
   // penalized not_met.
-  const attemptedDoiChecks = (doiChecks ?? []).filter(c => c.http_status !== null || c.resolved)
+  // A doi.org answer that refuses the crawler (403/429) or fails (5xx)
+  // says nothing about the DOI itself: left out like a check never made.
+  const attemptedDoiChecks = (doiChecks ?? []).filter(c => c.resolved || (c.http_status !== null && answerStatus(c.http_status) === 'resolved'))
   const resolvedCount = attemptedDoiChecks.filter(c => c.resolved).length
   const doiRatio = ratio(resolvedCount, attemptedDoiChecks.length)
   const doi_resolution_reliability = doiRatio == null ? 'unknown' : (doiRatio >= 0.80 ? 'met' : 'not_met')
@@ -216,7 +242,13 @@ export function deriveInfrastructureItemStatuses({ sample, doiChecks, oaiPmhChec
   // a confirmed absence -- never `not_met`.
   let oai_pmh_schema_org_machine_readable
   if (!oaiPmhCheck || !oaiPmhCheck.attempted) oai_pmh_schema_org_machine_readable = 'unknown'
-  else oai_pmh_schema_org_machine_readable = oaiPmhCheck.ok ? 'met' : (oaiPmhCheck.http_status == null ? 'unknown' : 'not_met')
+  else if (oaiPmhCheck.ok) oai_pmh_schema_org_machine_readable = 'met'
+  else {
+    // A 403/429 is the platform refusing POSI's crawler: `blocked` (AJR-E-1.1
+    // § 2), excluded from the resolved denominator, never a failed item.
+    const s = answerStatus(oaiPmhCheck.http_status)
+    oai_pmh_schema_org_machine_readable = s === 'resolved' ? 'not_met' : s
+  }
 
   // digital_preservation_archiving: Crossref's own per-work `archive` field
   // (CLOCKSS/Portico/LOCKSS registration) -- real signal, expected to

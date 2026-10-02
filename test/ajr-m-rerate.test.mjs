@@ -159,7 +159,7 @@ test('rateMatureJournal: full evidence -> official, scored, rating.schema.json s
   const { rating, reasons } = rateMatureJournal(matureInput())
   assert.equal(rating.rating_status, 'official')
   assert.equal(rating.track, 'mature')
-  assert.equal(rating.methodology_version, 'AJR-M-1.0')
+  assert.equal(rating.methodology_version, 'AJR-M-1.1')
   assert.equal(rating.rating_date, '2026-10-07')
   assert.ok(rating.total_score > 90, String(rating.total_score))
   assert.equal(rating.rating, 'A+')

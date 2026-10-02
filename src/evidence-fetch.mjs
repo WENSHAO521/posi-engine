@@ -16,6 +16,26 @@
  * scoring, but matter for the fetch-event log itself).
  */
 
+/**
+ * Whether a crawl reached its source cleanly: `complete`, or
+ * `partial_source_unavailable` (with the recrawl fields) when pages timed
+ * out or the host failed, so low coverage from a flaky source can be told
+ * apart from a journal lacking its policies (evidence/README.md).
+ * @param {{ url: string, fetch_status: string }[]} fetchedPages
+ */
+export function evidenceSnapshotStatus(fetchedPages) {
+  const transient = (fetchedPages ?? []).filter(p => ['timeout', 'network_error', 'server_error', 'rate_limited'].includes(p.fetch_status))
+  if (transient.length === 0) return { evidence_snapshot_status: 'complete', recrawl_required: false }
+  let host = null
+  try { host = new URL(transient[0].url).host } catch { /* unparseable url */ }
+  return {
+    evidence_snapshot_status: 'partial_source_unavailable',
+    recrawl_required: true,
+    recrawl_reason: transient.every(p => p.fetch_status === 'timeout') ? 'source_host_intermittent_timeout' : 'source_host_errors',
+    recrawl_host: host,
+  }
+}
+
 export const FETCH_STATUSES = Object.freeze([
   'ok',
   'not_found',

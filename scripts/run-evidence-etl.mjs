@@ -39,7 +39,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs'
 import { resolve, join } from 'path'
-import { fetchWithStatus, isPathDisallowedByRobots } from '../src/evidence-fetch.mjs'
+import { fetchWithStatus, isPathDisallowedByRobots, evidenceSnapshotStatus } from '../src/evidence-fetch.mjs'
 import { candidateUrls, discoverLinks } from '../src/evidence-page-discovery.mjs'
 import { resolveAllCriteria, EVIDENCE_CRITERIA } from '../src/evidence-resolver.mjs'
 import { applyPublisherInheritance } from '../src/evidence-publisher-registry.mjs'
@@ -210,6 +210,7 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry }
     site_evidence_coverage_percent: coverage.coverage_percent,
     evidence_methodology_version: EVIDENCE_COVERAGE_METHODOLOGY_VERSION,
     snapshot_date: new Date().toISOString().slice(0, 10),
+    ...evidenceSnapshotStatus(fetchedPages),
   }
 }
 

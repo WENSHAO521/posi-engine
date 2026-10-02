@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * rate-mature.mjs — runs AJR-M-1.0 (`src/ajr-m-rerate.mjs`) over a corpus
+ * rate-mature.mjs — runs AJR-M-1.1 (`src/ajr-m-rerate.mjs`) over a corpus
  * file (corpus/core-collection.json or corpus/global-benchmark.json).
  *
  * Every journal whose exact-date lifecycle stage is Mature (60+ months,
