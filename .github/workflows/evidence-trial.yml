@@ -6,7 +6,8 @@ name: Evidence trial
 # Early-Stage journals). Read only: nothing is written to posi-data; the
 # evidence and a summary (per website host: pages fetched / refused / timed
 # out, site coverage; AJR outcome and reasons) are the run's artifact and
-# its job summary.
+# its job summary, with a read-only Crossref policy-signal comparison
+# (scripts/crossref-policy-signals.mjs).
 
 on:
   workflow_dispatch:
@@ -49,6 +50,14 @@ jobs:
         run: |
           node scripts/run-evidence-etl.mjs --corpus work/sample.json \
             --publisher-registry posi-data/evidence/publishers --out work/evidence
+
+      # Trial only: what Crossref's own deposits (license, Crossmark, review
+      # dates, COI / data statements) would add where the crawl was refused.
+      # Reported, never scored (src/crossref-policy-signals.mjs).
+      - name: Crossref policy signals
+        run: |
+          node scripts/crossref-policy-signals.mjs --sample work/sample.json \
+            --evidence-journals work/evidence/journals --out work/crossref-policy-signals.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Article sample
         run: node scripts/run-works-etl.mjs --corpus work/sample.json --out work/works
