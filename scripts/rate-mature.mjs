@@ -14,6 +14,9 @@
  *   --corpus              corpus JSON (array, or { journals: [...] })
  *   --evidence-journals   posi-data evidence/journals
  *   --evidence-works      posi-data evidence/works
+ *   --evidence-output     posi-data evidence/output (run-output-history-etl.mjs):
+ *                         yearly works per journal; a journal with no file
+ *                         there has no output history and is not rateable
  *   --citation-ranking    rankings/citation/citation-ranking-<year>.json[.gz]
  *   --pci                 PCI records: collections/pci.json, or a directory of
  *                         per-journal JSON files (the PCI audit's pci/ shards)
@@ -26,8 +29,8 @@
  *   --out-report          directory for rate-mature-summary.json and per-journal-mature.csv
  * Options:
  *   --rating-date YYYY-MM-DD   (default today)
- *   --offline                  skip OpenAlex; every journal then lacks output history
- *   --delay-ms 120             pause between OpenAlex requests
+ *
+ * Reads files only: every external source is fetched by an ETL step first.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'fs'
@@ -35,7 +38,6 @@ import { gunzipSync } from 'zlib'
 import { resolve, join } from 'path'
 import { rateMatureJournal, buildCitationPeerSets } from '../src/ajr-m-rerate.mjs'
 import { classifyLifecycle } from '../src/lifecycle.mjs'
-import { fetchCountsByYear } from '../src/output-history.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -61,8 +63,8 @@ function readJsonTree(dir) {
   return out
 }
 
-async function main() {
-  const required = ['corpus', 'evidence-journals', 'evidence-works', 'citation-ranking', 'pci', 'out-corpus', 'out-report']
+function main() {
+  const required = ['corpus', 'evidence-journals', 'evidence-works', 'evidence-output', 'citation-ranking', 'pci', 'out-corpus', 'out-report']
   const missing = required.filter(n => !arg(n))
   if (missing.length) {
     console.error(`Missing --${missing.join(', --')}. See the header of scripts/rate-mature.mjs for usage.`)
@@ -71,11 +73,10 @@ async function main() {
   const corpusPath = resolve(arg('corpus'))
   const evidenceJournalsDir = resolve(arg('evidence-journals'))
   const evidenceWorksDir = resolve(arg('evidence-works'))
+  const evidenceOutputDir = resolve(arg('evidence-output'))
   const pciPath = resolve(arg('pci'))
   const outReportDir = resolve(arg('out-report'))
   const ratingDate = new Date(`${arg('rating-date', new Date().toISOString().slice(0, 10))}T00:00:00Z`)
-  const offline = process.argv.includes('--offline')
-  const delayMs = Number(arg('delay-ms', '120'))
   const suppressions = arg('suppressions') ? readJson(resolve(arg('suppressions'))) : {}
 
   const corpusRaw = readJson(corpusPath)
@@ -84,7 +85,7 @@ async function main() {
   const pciRecords = statSync(pciPath).isDirectory() ? readJsonTree(pciPath) : readJson(pciPath)
   const peerSets = buildCitationPeerSets(ranking.records ?? ranking, pciRecords)
   console.log(`Loaded ${journals.length} journals, ${(ranking.records ?? ranking).length} ranking records, ${pciRecords.length} PCI records`)
-  console.log(`Rating date: ${ratingDate.toISOString().slice(0, 10)}${offline ? ' (offline: no output history)' : ''}`)
+  console.log(`Rating date: ${ratingDate.toISOString().slice(0, 10)}`)
 
   const rows = []
   const updated = []
@@ -95,13 +96,9 @@ async function main() {
       updated.push(rest)
       continue
     }
-    let countsByYear = null, historyError = 'offline'
-    if (!offline) {
-      const r = await fetchCountsByYear(journal.openalex_source_id)
-      countsByYear = r.counts_by_year
-      historyError = r.error
-      if (delayMs > 0) await new Promise(res => setTimeout(res, delayMs))
-    }
+    const history = loadJsonIfExists(join(evidenceOutputDir, `${journal.posi_id}.json`))
+    const countsByYear = history?.counts_by_year ?? null
+    const historyError = history ? history.fetch_error : 'no output-history evidence on record'
     const flagged = suppressions[journal.posi_id]
     let result
     try {
@@ -151,4 +148,4 @@ async function main() {
   console.log(JSON.stringify(summary, null, 2))
 }
 
-main().catch(err => { console.error(err); process.exit(1) })
+main()

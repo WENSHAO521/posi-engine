@@ -8,9 +8,11 @@ name: Monthly AJR rerate
 # Steps:
 #   1. refreshes the evidence posi-data keeps for every Core Collection
 #      journal: site crawl (run-evidence-etl.mjs -> evidence/journals) and
-#      article sample (run-works-etl.mjs -> evidence/works); a journal whose
-#      source could not be reached keeps its stored snapshot
-#      (apply-evidence-refresh.mjs), and a run that reached nothing fails;
+#      article sample (run-works-etl.mjs -> evidence/works), plus yearly
+#      output for Mature journals (run-output-history-etl.mjs ->
+#      evidence/output, from OpenAlex); a journal whose source could not be
+#      reached keeps its stored snapshot (apply-evidence-refresh.mjs), and a
+#      run that reached nothing fails;
 #   2. re-rates every journal (rerate-core-collection-ajr-e-1.1.mjs), which
 #      replaces early_stage_rating in corpus/core-collection.json: AJR-E for
 #      Early-Stage journals, not_applicable with the current stage otherwise;
@@ -98,6 +100,16 @@ jobs:
           node scripts/apply-evidence-refresh.mjs --kind works \
             --from work/works/journals --to posi-data/evidence/works
 
+      - name: Refresh output history (Mature journals)
+        if: inputs.skip_crawl != true
+        run: |
+          set -euo pipefail
+          node scripts/run-output-history-etl.mjs --mature-only \
+            --corpus posi-data/corpus/core-collection.json \
+            --out work/output
+          node scripts/apply-evidence-refresh.mjs --kind output \
+            --from work/output/journals --to posi-data/evidence/output
+
       - name: Re-rate the Core Collection
         run: |
           set -euo pipefail
@@ -121,6 +133,7 @@ jobs:
             --corpus posi-data/corpus/core-collection.json \
             --evidence-journals posi-data/evidence/journals \
             --evidence-works posi-data/evidence/works \
+            --evidence-output posi-data/evidence/output \
             --citation-ranking "$RANKING" \
             --pci "$(ls -d posi-data/audits/pjr-seed-corpus/*/pci | sort | tail -1)" \
             --out-corpus posi-data/corpus/core-collection.json \
@@ -149,6 +162,7 @@ jobs:
           git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH"
           git add corpus/core-collection.json evidence/journals evidence/works
+          [ -d evidence/output ] && git add evidence/output
           git commit -m "AJR rerate $MONTH (Core Collection)"
           git push --force origin "$BRANCH"
           {
