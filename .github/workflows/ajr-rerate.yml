@@ -14,11 +14,10 @@ name: Monthly AJR rerate
 #   2. re-rates every journal (rerate-core-collection-ajr-e-1.1.mjs), which
 #      replaces early_stage_rating in corpus/core-collection.json: AJR-E for
 #      Early-Stage journals, not_applicable with the current stage otherwise;
+#      then rates Mature journals with AJR-M (rate-mature.mjs ->
+#      mature_rating);
 #   3. opens (or updates) a pull request on posi-data with the result, branch
 #      ajr-rerate/<YYYY-MM>, for review before it reaches the site.
-#
-# AJR-M: src/ajr-mature.mjs has the scoring functions but no runner yet, so
-# Mature journals are only marked as such here, not scored.
 #
 # Schedule: the 7th of each month, after journal-directory.yml (4th-6th).
 #
@@ -111,6 +110,23 @@ jobs:
             --out-report work/rerate-report \
             ${DATE:+--rating-date "$DATE"}
 
+      # AJR-M for Mature journals (60+ months). The Core Collection has none
+      # until December 2029, so until then this only confirms that.
+      - name: Rate Mature journals (AJR-M)
+        run: |
+          set -euo pipefail
+          DATE="${{ inputs.rating_date }}"
+          RANKING=$(ls posi-data/rankings/citation/citation-ranking-*.json.gz | sort | tail -1)
+          node scripts/rate-mature.mjs \
+            --corpus posi-data/corpus/core-collection.json \
+            --evidence-journals posi-data/evidence/journals \
+            --evidence-works posi-data/evidence/works \
+            --citation-ranking "$RANKING" \
+            --pci "$(ls -d posi-data/audits/pjr-seed-corpus/*/pci | sort | tail -1)" \
+            --out-corpus posi-data/corpus/core-collection.json \
+            --out-report work/rate-mature-report \
+            ${DATE:+--rating-date "$DATE"}
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -143,7 +159,13 @@ jobs:
             echo
             echo '```'
             echo
-            echo "Per-journal comparison: the run's ajr-rerate-report artifact (rerate-report/per-journal-comparison.csv)."
+            echo 'AJR-M:'
+            echo
+            echo '```json'
+            cat ../work/rate-mature-report/rate-mature-summary.json
+            echo '```'
+            echo
+            echo "Per-journal detail: the run's ajr-rerate-report artifact (rerate-report/per-journal-comparison.csv, rate-mature-report/per-journal-mature.csv)."
           } > ../pr-body.md
           if [ "$(gh pr list --head "$BRANCH" --state open --json number -q length)" = "0" ]; then
             gh pr create --head "$BRANCH" --base "$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)" \
