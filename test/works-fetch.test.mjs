@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   fetchCrossrefWorksPage, fetchCrossrefTotalResults, fetchAllCrossrefWorks,
   checkDoiResolution, checkOaiPmhEndpoint, WORKS_SELECT_FIELDS, MAX_WORKS_FETCHED_PER_JOURNAL,
-  PCS_SELECT_FIELDS, PCS_MAX_WORKS_PER_JOURNAL,
+  PCS_SELECT_FIELDS, PCS_MAX_WORKS_PER_JOURNAL, CROSSREF_MAX_OFFSET,
 } from '../src/works-fetch.mjs'
 
 function jsonResponse(body, status = 200) {
@@ -79,17 +79,53 @@ test('fetchCrossrefTotalResults: rows=0 style call surfaces just the count', asy
   assert.equal(result.totalResults, 42)
 })
 
-test('fetchAllCrossrefWorks: pages through cursor until next-cursor is null', async () => {
-  let calls = 0
-  const fetchImpl = async () => {
-    calls++
-    if (calls === 1) return jsonResponse({ message: { 'total-results': 3, items: [{ DOI: '1' }, { DOI: '2' }], 'next-cursor': 'page2' } })
-    return jsonResponse({ message: { 'total-results': 3, items: [{ DOI: '3' }], 'next-cursor': null } })
+test('fetchAllCrossrefWorks: sorted by date (default), pages by offset, never a cursor, until total-results', async () => {
+  // Real regression (2026-10): Crossref answers a cursor combined with a
+  // date sort with HTTP 400 sort-criteria-incompatible-with-cursor.
+  const urls = []
+  const fetchImpl = async (url) => {
+    urls.push(new URL(url))
+    return urls.length === 1
+      ? jsonResponse({ message: { 'total-results': 3, items: [{ DOI: '1' }, { DOI: '2' }], 'next-cursor': 'page2' } })
+      : jsonResponse({ message: { 'total-results': 3, items: [{ DOI: '3' }], 'next-cursor': 'page3' } })
   }
   const result = await fetchAllCrossrefWorks('1234-5678', { fetchImpl, rows: 2 })
   assert.equal(result.status, 200)
   assert.equal(result.items.length, 3)
   assert.equal(result.pagesFetched, 2)
+  assert.deepEqual(urls.map(u => u.searchParams.get('offset')), ['0', '2'])
+  assert.ok(urls.every(u => !u.searchParams.has('cursor') && u.searchParams.get('sort') === 'published'))
+})
+
+test('fetchAllCrossrefWorks: any other sort pages through cursor until next-cursor is null', async () => {
+  const urls = []
+  const fetchImpl = async (url) => {
+    urls.push(new URL(url))
+    return urls.length === 1
+      ? jsonResponse({ message: { 'total-results': 3, items: [{ DOI: '1' }, { DOI: '2' }], 'next-cursor': 'page2' } })
+      : jsonResponse({ message: { 'total-results': 3, items: [{ DOI: '3' }], 'next-cursor': null } })
+  }
+  const result = await fetchAllCrossrefWorks('1234-5678', { fetchImpl, rows: 2, sort: 'created', order: 'asc' })
+  assert.equal(result.items.length, 3)
+  assert.deepEqual(urls.map(u => u.searchParams.get('cursor')), ['*', 'page2'])
+  assert.ok(urls.every(u => !u.searchParams.has('offset')))
+})
+
+test('fetchAllCrossrefWorks: offset paging stops at Crossref\'s offset limit', async () => {
+  const fetchImpl = async () => jsonResponse({ message: { 'total-results': 50_000, items: Array.from({ length: 1000 }, (_, i) => ({ DOI: String(i) })) } })
+  const result = await fetchAllCrossrefWorks('1234-5678', { fetchImpl, rows: 1000, maxItems: 20_000 })
+  assert.equal(result.items.length, CROSSREF_MAX_OFFSET)
+})
+
+test('fetchCrossrefWorksPage: PCS\'s created sort still sends a cursor; fetchCrossrefTotalResults sends an offset', async () => {
+  let url
+  const fetchImpl = async (u) => { url = new URL(u); return jsonResponse({ message: { 'total-results': 0, items: [] } }) }
+  await fetchCrossrefWorksPage('1234-5678', { fetchImpl, sort: 'created', order: 'asc', cursor: 'abc' })
+  assert.equal(url.searchParams.get('cursor'), 'abc')
+  assert.ok(!url.searchParams.has('offset'))
+  await fetchCrossrefTotalResults('1234-5678', { fetchImpl })
+  assert.equal(url.searchParams.get('offset'), '0')
+  assert.ok(!url.searchParams.has('cursor'))
 })
 
 test('fetchAllCrossrefWorks: stops at maxItems even if more pages remain (defensive cap)', async () => {
