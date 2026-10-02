@@ -56,6 +56,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       ALERT_TITLE: 'AJR rerate: run needs attention'
+      # A manual run's rating date reaches the shell only as this variable.
+      DATE: ${{ inputs.rating_date }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,6 +69,9 @@ jobs:
         env:
           POSI_DATA_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
         run: |
+          if [ -n "$DATE" ] && ! [[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "::error::rating_date must be YYYY-MM-DD"; exit 1
+          fi
           if [ -z "$POSI_DATA_TOKEN" ]; then
             echo "::error::The POSI_DATA_TOKEN secret is not set (see the header of this workflow)"
             exit 1
@@ -94,7 +99,6 @@ jobs:
         if: inputs.skip_crawl != true
         run: |
           set -euo pipefail
-          DATE="${{ inputs.rating_date }}"
           node scripts/run-works-etl.mjs \
             --corpus posi-data/corpus/core-collection.json \
             --out work/works \
@@ -115,7 +119,6 @@ jobs:
       - name: Re-rate the Core Collection
         run: |
           set -euo pipefail
-          DATE="${{ inputs.rating_date }}"
           node scripts/rerate-core-collection-ajr-e-1.1.mjs \
             --corpus posi-data/corpus/core-collection.json \
             --evidence-journals posi-data/evidence/journals \
@@ -129,7 +132,6 @@ jobs:
       - name: Rate Mature journals (AJR-M)
         run: |
           set -euo pipefail
-          DATE="${{ inputs.rating_date }}"
           RANKING=$(ls posi-data/rankings/citation/citation-ranking-*.json.gz | sort | tail -1)
           node scripts/rate-mature.mjs \
             --corpus posi-data/corpus/core-collection.json \

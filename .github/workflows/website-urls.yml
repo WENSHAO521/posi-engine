@@ -4,7 +4,7 @@ name: Refresh website URLs
 # have none) and replaces them with the journal's OpenAlex homepage_url when
 # that one answers (scripts/refresh-website-urls.mjs). Run by hand before a
 # large evidence crawl. The change arrives as a pull request on posi-data
-# (branch website-urls/<date>) with the full report in its run's artifact;
+# (branch website-urls/<date>-<corpus>-<run id>) with the full report in its run's artifact;
 # nothing changes until it is reviewed and merged.
 #
 # Needs the POSI_DATA_TOKEN secret (see ajr-rerate.yml).
@@ -41,11 +41,20 @@ jobs:
           path: posi-data
           token: ${{ secrets.POSI_DATA_TOKEN }}
 
+      # Inputs reach the shell only as environment variables, never pasted
+      # into the script (a crafted value must not run commands with the
+      # posi-data token).
       - name: Check website URLs
+        env:
+          CORPUS: ${{ inputs.corpus }}
+          ONLY_RATEABLE: ${{ inputs.only_rateable }}
         run: |
+          set -euo pipefail
+          case "$CORPUS" in corpus/*.json) ;; *) echo "::error::corpus must be corpus/<name>.json"; exit 1 ;; esac
+          FLAG=""; [ "$ONLY_RATEABLE" = "true" ] && FLAG="--only-rateable"
           node scripts/refresh-website-urls.mjs \
-            --corpus "posi-data/${{ inputs.corpus }}" --out "posi-data/${{ inputs.corpus }}" \
-            --report work/website-urls ${{ inputs.only_rateable && '--only-rateable' || '' }}
+            --corpus "posi-data/$CORPUS" --out "posi-data/$CORPUS" \
+            --report work/website-urls $FLAG
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -56,6 +65,7 @@ jobs:
       - name: Open a pull request on posi-data
         env:
           GH_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
+          CORPUS: ${{ inputs.corpus }}
         working-directory: posi-data
         run: |
           set -euo pipefail
@@ -63,12 +73,13 @@ jobs:
             echo "No website URL changed"; exit 0
           fi
           DAY=$(date -u +%Y-%m-%d)
-          BRANCH="website-urls/$DAY"
+          # One branch per run: a second run never overwrites a pending one.
+          BRANCH="website-urls/$DAY-$(basename "$CORPUS" .json)-$GITHUB_RUN_ID"
           git config user.name "github-actions[bot]"
           git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH"
-          git add "${{ inputs.corpus }}"
-          git commit -m "Refresh website URLs ($DAY, ${{ inputs.corpus }})"
+          git add "$CORPUS"
+          git commit -m "Refresh website URLs ($DAY, $CORPUS)"
           git push --force origin "$BRANCH"
           node -e '
             const r = require("../work/website-urls/website-urls.json")
@@ -86,7 +97,7 @@ jobs:
           '
           if [ "$(gh pr list --head "$BRANCH" --state open --json number -q length)" = "0" ]; then
             gh pr create --head "$BRANCH" --base "$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)" \
-              --title "Refresh website URLs ($DAY)" --body-file ../pr-body.md
+              --title "Refresh website URLs ($DAY, $CORPUS)" --body-file ../pr-body.md
           else
             gh pr edit "$BRANCH" --body-file ../pr-body.md
           fi

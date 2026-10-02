@@ -20,7 +20,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { resolve, join } from 'path'
 import { fetchWithStatus } from '../src/evidence-fetch.mjs'
-import { decideWebsiteUrl } from '../src/website-url.mjs'
+import { decideWebsiteUrl, liveness } from '../src/website-url.mjs'
 import { classifyLifecycle } from '../src/lifecycle.mjs'
 
 const OPENALEX = 'https://api.openalex.org'
@@ -77,7 +77,8 @@ async function main() {
     const current = j.website_url || null
     const currentCheck = await check(current)
     let candidate = null, candidateCheck = null
-    if (!current || currentCheck?.fetch_status !== 'ok') {
+    // A replacement is looked up only where one could be used.
+    if (!current || liveness(currentCheck) === 'dead') {
       candidate = await openalexHomepage(j.openalex_source_id)
       candidateCheck = await check(candidate)
     }

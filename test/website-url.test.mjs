@@ -31,10 +31,15 @@ test('decideWebsiteUrl: a dead address is replaced by an answering OpenAlex home
 test('decideWebsiteUrl: dead with no usable replacement is reported, not changed', () => {
   assert.equal(decideWebsiteUrl({ current: 'http://a.example/', currentCheck: gone, candidate: null, candidateCheck: null }).action, 'dead_no_replacement')
   assert.equal(decideWebsiteUrl({ current: 'http://a.example/', currentCheck: gone, candidate: 'https://b.example/', candidateCheck: gone }).action, 'dead_no_replacement')
-  assert.equal(decideWebsiteUrl({ current: 'http://www.a.example/j/', currentCheck: gone, candidate: 'https://a.example/j', candidateCheck: ok }).action, 'dead_no_replacement')
+  assert.equal(decideWebsiteUrl({ current: 'https://a.example/j/', currentCheck: gone, candidate: 'https://A.example/j', candidateCheck: ok }).action, 'dead_no_replacement')
 })
 
 test('decideWebsiteUrl: a missing website is filled only from an answering homepage', () => {
   assert.deepEqual(decideWebsiteUrl({ current: null, currentCheck: null, candidate: 'https://b.example/', candidateCheck: ok }).action, 'add')
   assert.equal(decideWebsiteUrl({ current: null, currentCheck: null, candidate: null, candidateCheck: null }).action, 'missing_no_replacement')
+})
+
+test('decideWebsiteUrl: a different query or scheme is a different address', () => {
+  assert.equal(decideWebsiteUrl({ current: 'https://a.example/journal?id=old', currentCheck: gone, candidate: 'https://a.example/journal?id=new', candidateCheck: ok }).action, 'replace')
+  assert.equal(decideWebsiteUrl({ current: 'http://a.example/j', currentCheck: noDns, candidate: 'https://a.example/j', candidateCheck: ok }).action, 'replace')
 })

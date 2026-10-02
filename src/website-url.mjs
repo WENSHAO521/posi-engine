@@ -26,8 +26,11 @@ export function liveness(check) {
   return 'unknown'
 }
 
+// The same resource: only a trailing slash and the host's case are
+// ignored; scheme, path and query all count (an https address can be alive
+// where its http twin is dead, and ?id= selects the journal).
 function sameAddress(a, b) {
-  const norm = u => { try { const x = new URL(u); return (x.host.replace(/^www\./, '') + x.pathname.replace(/\/+$/, '')).toLowerCase() } catch { return String(u).toLowerCase() } }
+  const norm = u => { try { const x = new URL(u); x.pathname = x.pathname.replace(/\/+$/, ''); return x.href } catch { return String(u) } }
   return norm(a) === norm(b)
 }
 
