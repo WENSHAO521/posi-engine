@@ -49,6 +49,7 @@
     { "posi_id": "POSI-J-024149", "title": "Journal of the Chemical Society Dalton Transactions", "url": "https://pubs.rsc.org/en/journals/journalissues/dt" },
     { "posi_id": "POSI-J-024188", "title": "Allergy", "url": "https://onlinelibrary.wiley.com/journal/13989995" },
     { "posi_id": "POSI-J-024198", "title": "Pacing and Clinical Electrophysiology", "url": "https://onlinelibrary.wiley.com/journal/15408159" },
-    { "posi_id": "POSI-J-023428", "title": "Open-File Report", "url": "https://pubs.usgs.gov/browse/usgs-publications/OFR" }
+    { "posi_id": "POSI-J-023428", "title": "Open-File Report", "url": "https://pubs.usgs.gov/browse/usgs-publications/OFR" },
+    { "posi_id": "POSI-J-023402", "title": "Journal of the Physical Society of Japan", "url": "https://journals.jps.jp/journal/jpsj" }
   ]
 }
