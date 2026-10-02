@@ -13,8 +13,8 @@
  *   node scripts/sample-corpus.mjs --corpus <corpus JSON> --n 50 --out sample.json [--date YYYY-MM-DD]
  */
 
-import { readFileSync, writeFileSync } from 'fs'
-import { resolve } from 'path'
+import { readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { classifyLifecycle } from '../src/lifecycle.mjs'
 
@@ -65,6 +65,7 @@ function main() {
   const asOf = new Date(`${arg('date', new Date().toISOString().slice(0, 10))}T00:00:00Z`)
   const rateable = corpus.filter(j => ['early_stage', 'mature'].includes(classifyLifecycle(j.early_stage_rating?.first_published ?? null, asOf).lifecycle_stage))
   const sample = stratifiedSample(rateable, Number(arg('n', '50')))
+  mkdirSync(dirname(resolve(arg('out'))), { recursive: true })
   writeFileSync(resolve(arg('out')), JSON.stringify(sample, null, 2) + '\n', 'utf-8')
   const hosts = {}
   for (const j of sample) hosts[hostOf(j.website_url)] = (hosts[hostOf(j.website_url)] ?? 0) + 1
