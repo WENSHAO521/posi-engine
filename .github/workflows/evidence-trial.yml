@@ -39,9 +39,11 @@ jobs:
           path: posi-data
 
       - name: Draw the sample
+        env:
+          CORPUS: ${{ inputs.corpus }}
+          N: ${{ inputs.n }}
         run: |
-          node scripts/sample-corpus.mjs --corpus "posi-data/${{ inputs.corpus }}" \
-            --n "${{ inputs.n }}" --out work/sample.json
+          node scripts/sample-corpus.mjs --corpus "posi-data/$CORPUS" --n "$N" --out work/sample.json
 
       - name: Site crawl
         run: |
