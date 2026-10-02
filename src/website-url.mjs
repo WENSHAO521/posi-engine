@@ -50,14 +50,40 @@ export function publisherRewrites(journal) {
   return []
 }
 
+// Catalogues, archives and aggregators: Wikidata's "official website" often
+// holds one of these, and they answer, but they are not the journal's site.
+const CATALOG_HOSTS = /(^|\.)(books\.google\.[a-z.]+|google\.com|oclc\.org|worldcat\.org|hathitrust\.org|umi\.com|proquest\.com|jstor\.org|metapress\.com|uni-regensburg\.de|doaj\.org|issn\.org|ncbi\.nlm\.nih\.gov|archive\.org|wikipedia\.org|crossref\.org|ebscohost\.com)$/i
+
+export function isCatalogUrl(url) {
+  try { return CATALOG_HOSTS.test(new URL(url).hostname) } catch { return true }
+}
+
+const norm = t => String(t ?? '').toLowerCase()
+  .replace(/&(nbsp|#160|#xa0);/gi, ' ').replace(/&(#39|#x27|rsquo|apos);/gi, "'").replace(/&amp;|&#38;/gi, '&').replace(/&[a-z]+;|&#x?[0-9a-f]+;/gi, ' ').replace(/&/g, ' and ').replace(/<[^>]*>/g, ' ')
+  .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/g, ' ').replace(/^ ?the /, '').trim()
+
 /**
- * A candidate is usable when it answers. One built by rule rather than
- * recorded somewhere (strict: true) must answer 200: a refusal tells nothing
- * about whether the guessed page exists.
+ * Does the page name the journal? Its title (without a leading "The",
+ * "&" read as "and", case, accents and punctuation ignored) must appear in
+ * the page text.
+ */
+export function pageMentionsTitle(body, title) {
+  const t = norm(title)
+  return t.length >= 3 && ` ${norm(body)} `.includes(` ${t} `)
+}
+
+/**
+ * A candidate is usable when it answers and is not a catalogue. One that
+ * comes from a weaker source than OpenAlex's journal record (strict: true —
+ * Wikidata, or an address built by rule) must answer 200 with a page that
+ * names the journal (check.mentions_title): a refusal says nothing about
+ * what is there, and Wikidata's websites are sometimes another
+ * publication's.
  */
 function usable(c) {
-  if (!c?.url) return false
-  return c.strict ? c.check?.fetch_status === 'ok' : liveness(c.check) === 'alive'
+  if (!c?.url || isCatalogUrl(c.url)) return false
+  return c.strict ? c.check?.fetch_status === 'ok' && c.check?.mentions_title === true : liveness(c.check) === 'alive'
 }
 
 /**
@@ -70,7 +96,8 @@ function usable(c) {
  */
 export function decideWebsiteUrl({ current, currentCheck, candidates = [] }) {
   const tried = candidates.filter(c => c?.url)
-  const none = tried.length ? `no candidate answers (${tried.map(c => `${c.source} ${c.check?.http_status ?? c.check?.fetch_status ?? 'unchecked'}`).join(', ')})` : 'no candidate found'
+  const status = c => isCatalogUrl(c.url) ? 'catalogue' : `${c.check?.http_status ?? c.check?.fetch_status ?? 'unchecked'}${c.check?.mentions_title === false ? ', title not on page' : ''}`
+  const none = tried.length ? `no usable candidate (${tried.map(c => `${c.source} ${status(c)}`).join('; ')})` : 'no candidate found'
   if (!current) {
     const c = tried.find(usable)
     return c
@@ -83,7 +110,7 @@ export function decideWebsiteUrl({ current, currentCheck, candidates = [] }) {
   const others = tried.filter(c => !sameAddress(c.url, current))
   const c = others.find(usable)
   if (c) return { action: 'replace', url: c.url, source: c.source, reason: `${why}; ${c.source} answers` }
-  return { action: 'dead_no_replacement', url: current, source: null, reason: `${why}; ${others.length ? none.replace('no candidate', 'no other candidate') : tried.length ? 'every candidate is the same address' : 'no candidate found'}` }
+  return { action: 'dead_no_replacement', url: current, source: null, reason: `${why}; ${others.length ? none.replace('no usable candidate', 'no other usable candidate') : tried.length ? 'every candidate is the same address' : 'no candidate found'}` }
 }
 
 /**

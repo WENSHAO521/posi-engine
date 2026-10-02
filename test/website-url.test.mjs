@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { liveness, decideWebsiteUrl, publisherRewrites, parseWikidataSites } from '../src/website-url.mjs'
+import { liveness, decideWebsiteUrl, publisherRewrites, parseWikidataSites, pageMentionsTitle, isCatalogUrl } from '../src/website-url.mjs'
 
 const ok = { fetch_status: 'ok', http_status: 200 }
 const refused = { fetch_status: 'forbidden', http_status: 403 }
@@ -50,15 +50,40 @@ test('decideWebsiteUrl: a different query or scheme is a different address', () 
 test('decideWebsiteUrl: falls through to Wikidata when OpenAlex has the same dead address', () => {
   const d = decideWebsiteUrl({
     current: 'http://www.springerlink.com/content/1234', currentCheck: noDns,
-    candidates: [openalex('http://www.springerlink.com/content/1234', noDns), { url: 'https://www.springer.com/journal/10551', check: refused, source: 'wikidata' }],
+    candidates: [openalex('http://www.springerlink.com/content/1234', noDns), { url: 'https://www.springer.com/journal/10551', check: { ...ok, mentions_title: true }, source: 'wikidata', strict: true }],
   })
   assert.deepEqual([d.action, d.url, d.source], ['replace', 'https://www.springer.com/journal/10551', 'wikidata'])
 })
 
 test('decideWebsiteUrl: an address built by rule must answer 200; a refusal is not enough', () => {
   const rule = check => ({ url: 'https://onlinelibrary.wiley.com/journal/14679248', check, source: 'publisher_rewrite', strict: true })
-  assert.equal(decideWebsiteUrl({ current: 'http://www.wiley.com/bw/journal.asp?ref=0032-3217', currentCheck: gone, candidates: [rule(refused)] }).action, 'dead_no_replacement')
-  assert.equal(decideWebsiteUrl({ current: 'http://www.wiley.com/bw/journal.asp?ref=0032-3217', currentCheck: gone, candidates: [rule(ok)] }).action, 'replace')
+  const was = 'http://www.wiley.com/bw/journal.asp?ref=0032-3217'
+  assert.equal(decideWebsiteUrl({ current: was, currentCheck: gone, candidates: [rule({ ...refused, mentions_title: false })] }).action, 'dead_no_replacement')
+  assert.equal(decideWebsiteUrl({ current: was, currentCheck: gone, candidates: [rule({ ...ok, mentions_title: false })] }).action, 'dead_no_replacement')
+  assert.equal(decideWebsiteUrl({ current: was, currentCheck: gone, candidates: [rule({ ...ok, mentions_title: true })] }).action, 'replace')
+})
+
+test('decideWebsiteUrl: catalogue sites never replace an address, whatever they answer', () => {
+  const d = decideWebsiteUrl({ current: 'http://www.mtt.org/publications/index.htm', currentCheck: gone, candidates: [
+    { url: 'http://books.google.com/books?id=kHDZfYHC3SoC', check: { ...ok, mentions_title: true }, source: 'wikidata', strict: true },
+    { url: 'http://firstsearch.oclc.org', check: { ...ok, mentions_title: true }, source: 'wikidata', strict: true },
+  ] })
+  assert.equal(d.action, 'dead_no_replacement')
+  assert.match(d.reason, /catalogue/)
+})
+
+test('isCatalogUrl: catalogues and archives, not publisher platforms', () => {
+  for (const u of ['http://books.google.com/books?id=x', 'http://firstsearch.oclc.org', 'http://bibpurl.oclc.org/web/4624', 'http://catalog.hathitrust.org/Record/1', 'http://www.umi.com/proquest', 'http://www.jstor.org/journals/00223816.html', 'http://cec.metapress.com/content/1/', 'not a url']) assert.equal(isCatalogUrl(u), true, u)
+  for (const u of ['https://academic.oup.com/bjr', 'https://link.springer.com/journal/11606', 'https://jamanetwork.com/journals/jamapediatrics']) assert.equal(isCatalogUrl(u), false, u)
+})
+
+test('pageMentionsTitle: the title must be on the page; "The", "&", case and markup ignored', () => {
+  assert.equal(pageMentionsTitle('<title>Journal of Politics | Chicago</title>', 'The Journal of Politics'), true)
+  assert.equal(pageMentionsTitle('<h1>Monthly&nbsp;Weather <b>Review</b></h1>', 'Monthly Weather Review'), true)
+  assert.equal(pageMentionsTitle('Food Science &amp; Technology', 'Food Science & Technology'), true)
+  assert.equal(pageMentionsTitle('Journal of Food Science and Technology', 'Journal of Food Science & Technology'), true)
+  assert.equal(pageMentionsTitle('USGS Open-File Report series', 'Journal of Applied Physics'), false)
+  assert.equal(pageMentionsTitle('Journal of Physics today', 'Journal of Phys'), false)
 })
 
 test('publisherRewrites: Wiley and Blackwell journals get the ISSN address; others none', () => {

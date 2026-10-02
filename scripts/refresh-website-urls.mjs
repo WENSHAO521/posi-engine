@@ -5,8 +5,9 @@
  * or springerlink.com) or that have none, and replaces them with the first
  * candidate that answers (src/website-url.mjs decides): the journal's
  * homepage_url in OpenAlex, its official website in Wikidata (P856, looked
- * up by ISSN), then a publisher address built from the ISSN (Wiley; must
- * answer 200).
+ * up by ISSN), then a publisher address built from the ISSN (Wiley). The
+ * last two must answer 200 with a page that names the journal, and
+ * catalogue sites (Google Books, OCLC, JSTOR...) never count.
  *
  * Writes the corpus with the changed website_url values (--out, may be the
  * input) and a report of every journal checked (--report, JSON + CSV), and
@@ -23,7 +24,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { resolve, join } from 'path'
 import { fetchWithStatus } from '../src/evidence-fetch.mjs'
-import { decideWebsiteUrl, liveness, publisherRewrites, parseWikidataSites } from '../src/website-url.mjs'
+import { decideWebsiteUrl, liveness, publisherRewrites, parseWikidataSites, pageMentionsTitle } from '../src/website-url.mjs'
 import { classifyLifecycle } from '../src/lifecycle.mjs'
 
 const OPENALEX = 'https://api.openalex.org'
@@ -35,13 +36,14 @@ function arg(name, fallback = null) {
   return i !== -1 ? process.argv[i + 1] : fallback
 }
 
-// Liveness only: the body is not needed, so a small cap keeps big pages cheap.
-async function check(url) {
+// Liveness, and with a title whether the page names the journal; a cap
+// keeps big pages cheap.
+async function check(url, title = null) {
   if (!url) return null
-  const once = () => fetchWithStatus(url, { timeoutMs: 20000, maxBodyBytes: 256 * 1024 })
+  const once = () => fetchWithStatus(url, { timeoutMs: 20000, maxBodyBytes: 1024 * 1024 })
   let r = await once()
   if (['timeout', 'network_error'].includes(r.fetch_status)) r = await once()
-  return { fetch_status: r.fetch_status, http_status: r.http_status }
+  return { fetch_status: r.fetch_status, http_status: r.http_status, ...(title ? { mentions_title: !!r.body && pageMentionsTitle(r.body, title) } : {}) }
 }
 
 async function openalexHomepage(sourceId) {
@@ -121,10 +123,10 @@ async function main() {
   await pool(stuck, Number(arg('concurrency', '8')), async r => {
     const seen = new Set(r.candidates.map(c => c.url))
     const more = [
-      ...[...new Set(issnsOf(r.j).flatMap(i => wd.get(i) ?? []))].map(url => ({ url, source: 'wikidata' })),
+      ...[...new Set(issnsOf(r.j).flatMap(i => wd.get(i) ?? []))].map(url => ({ url, source: 'wikidata', strict: true })),
       ...publisherRewrites(r.j).map(url => ({ url, source: 'publisher_rewrite', strict: true })),
     ].filter(c => !seen.has(c.url) && seen.add(c.url))
-    for (const c of more) r.candidates.push({ ...c, check: await check(c.url) })
+    for (const c of more) r.candidates.push({ ...c, check: await check(c.url, r.j.title) })
   })
 
   const rows = first.map(({ j, current, currentCheck, candidates }, i) => {
@@ -133,7 +135,7 @@ async function main() {
     return {
       posi_id: j.posi_id, title: j.title, publisher: j.publisher ?? null, current,
       current_status: currentCheck?.http_status ?? currentCheck?.fetch_status ?? null,
-      candidates: candidates.map(c => ({ source: c.source, url: c.url, status: c.check?.http_status ?? c.check?.fetch_status ?? null })),
+      candidates: candidates.map(c => ({ source: c.source, url: c.url, status: `${c.check?.http_status ?? c.check?.fetch_status ?? '?'}${c.check?.mentions_title === false ? ', title not on page' : ''}` })),
       ...d,
     }
   })
