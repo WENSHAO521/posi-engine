@@ -95,13 +95,15 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         env:
           POSI_MAILTO: posi@panorama-sg.com
+          LIMIT: ${{ inputs.limit }}
         run: |
+          [[ -z "$LIMIT" || "$LIMIT" =~ ^[0-9]+$ ]] || { echo "limit must be a whole number" >&2; exit 1; }
           node scripts/global/refresh-directory.mjs \
             --work dir-work \
             --curated posi-data/corpus/core-collection.json \
             --curated posi-data/corpus/global-benchmark.json \
             --budget-minutes 320 \
-            ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
+            ${LIMIT:+--limit "$LIMIT"}
 
       - name: Release the journal corpus
         if: steps.refresh.outputs.corpus_ready == 'true' && inputs.limit == ''

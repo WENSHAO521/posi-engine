@@ -140,7 +140,9 @@ jobs:
         env:
           POSI_MAILTO: posi@panorama-sg.com
           OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
+          LIMIT: ${{ inputs.limit }}
         run: |
+          [[ -z "$LIMIT" || "$LIMIT" =~ ^[0-9]+$ ]] || { echo "limit must be a whole number" >&2; exit 1; }
           node scripts/global/run-cycle.mjs \
             --work work \
             --curated posi-data/corpus/core-collection.json \
@@ -151,7 +153,7 @@ jobs:
             --no-pcs-fetch \
             ${{ inputs.recheck_issns && '--reopen-pcs' || '' }} \
             ${{ inputs.pnci_backfill && '--reopen-pnci' || '' }} \
-            ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
+            ${LIMIT:+--limit "$LIMIT"}
 
       # The journal directory only needs the corpus, so it is released as soon
       # as the corpus exists (PCS for every journal comes later).
@@ -245,7 +247,9 @@ jobs:
       - name: Compute PCS for shard ${{ matrix.shard }}
         env:
           POSI_MAILTO: posi@panorama-sg.com
+          LIMIT: ${{ inputs.limit }}
         run: |
+          [[ -z "$LIMIT" || "$LIMIT" =~ ^[0-9]+$ ]] || { echo "limit must be a whole number" >&2; exit 1; }
           touch "$RUNNER_TEMP/start"
           node scripts/run-pcs-etl.mjs \
             --corpus work/global-corpus.json \
@@ -255,7 +259,7 @@ jobs:
             --budget-minutes 310 \
             --require-cells \
             ${{ inputs.recheck_issns && '--recheck-issns' || '' }} \
-            ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
+            ${LIMIT:+--limit "$LIMIT"}
 
       # Only what this shard wrote: finished journals and mid-journal checkpoints.
       - name: Pack results
