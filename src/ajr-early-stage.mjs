@@ -352,7 +352,7 @@ export function scoreOutputSignals(articles) {
 
 export const REACH_CONCENTRATION_WEIGHT = 10
 
-function normalizeAffiliation(s) {
+export function normalizeAffiliation(s) {
   return (s ?? '').toLowerCase().replace(/[^a-z0-9一-鿿]+/g, ' ').trim()
 }
 

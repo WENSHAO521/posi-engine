@@ -1,0 +1,179 @@
+name: Monthly AJR rerate
+
+# Re-rates the Core Collection once a month, so lifecycle stages and AJR
+# scores follow the calendar instead of the last hand-run rerate (a journal
+# crosses Observation -> Early-Stage at 12 months and Early-Stage -> Mature at
+# 60, LIFECYCLE-1.1).
+#
+# Steps:
+#   1. refreshes the evidence posi-data keeps for every Core Collection
+#      journal: site crawl (run-evidence-etl.mjs -> evidence/journals) and
+#      article sample (run-works-etl.mjs -> evidence/works); a journal whose
+#      source could not be reached keeps its stored snapshot
+#      (apply-evidence-refresh.mjs), and a run that reached nothing fails;
+#   2. re-rates every journal (rerate-core-collection-ajr-e-1.1.mjs), which
+#      replaces early_stage_rating in corpus/core-collection.json: AJR-E for
+#      Early-Stage journals, not_applicable with the current stage otherwise;
+#      then rates Mature journals with AJR-M (rate-mature.mjs ->
+#      mature_rating);
+#   3. opens (or updates) a pull request on posi-data with the result, branch
+#      ajr-rerate/<YYYY-MM>, for review before it reaches the site.
+#
+# Schedule: the 7th of each month, after journal-directory.yml (4th-6th).
+#
+# Needs the POSI_DATA_TOKEN secret: a token that can push branches to and
+# open pull requests on WENSHAO521/posi-data (contents + pull requests write).
+# A failed run opens an issue here (scripts/global/alert.sh).
+
+on:
+  schedule:
+    - cron: '40 3 7 * *'   # 7th of each month, 03:40 UTC
+  workflow_dispatch:
+    inputs:
+      skip_crawl:
+        description: 'Re-rate from the evidence already in posi-data (no site crawl or article sample)'
+        type: boolean
+        default: false
+      rating_date:
+        description: 'Rating date YYYY-MM-DD (empty = today)'
+        required: false
+        default: ''
+
+concurrency:
+  group: ajr-rerate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write     # alerts
+
+jobs:
+  rerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ALERT_TITLE: 'AJR rerate: run needs attention'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check the posi-data token
+        env:
+          POSI_DATA_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
+        run: |
+          if [ -z "$POSI_DATA_TOKEN" ]; then
+            echo "::error::The POSI_DATA_TOKEN secret is not set (see the header of this workflow)"
+            exit 1
+          fi
+
+      - name: Check out posi-data
+        uses: actions/checkout@v4
+        with:
+          repository: WENSHAO521/posi-data
+          path: posi-data
+          token: ${{ secrets.POSI_DATA_TOKEN }}
+
+      - name: Refresh site-crawl evidence
+        if: inputs.skip_crawl != true
+        run: |
+          set -euo pipefail
+          node scripts/run-evidence-etl.mjs \
+            --corpus posi-data/corpus/core-collection.json \
+            --publisher-registry posi-data/evidence/publishers \
+            --out work/evidence
+          node scripts/apply-evidence-refresh.mjs --kind journals \
+            --from work/evidence/journals --to posi-data/evidence/journals
+
+      - name: Refresh article-sample evidence
+        if: inputs.skip_crawl != true
+        run: |
+          set -euo pipefail
+          node scripts/run-works-etl.mjs \
+            --corpus posi-data/corpus/core-collection.json \
+            --out work/works
+          node scripts/apply-evidence-refresh.mjs --kind works \
+            --from work/works/journals --to posi-data/evidence/works
+
+      - name: Re-rate the Core Collection
+        run: |
+          set -euo pipefail
+          DATE="${{ inputs.rating_date }}"
+          node scripts/rerate-core-collection-ajr-e-1.1.mjs \
+            --corpus posi-data/corpus/core-collection.json \
+            --evidence-journals posi-data/evidence/journals \
+            --evidence-works posi-data/evidence/works \
+            --out-corpus posi-data/corpus/core-collection.json \
+            --out-report work/rerate-report \
+            ${DATE:+--rating-date "$DATE"}
+
+      # AJR-M for Mature journals (60+ months). The Core Collection has none
+      # until December 2029, so until then this only confirms that.
+      - name: Rate Mature journals (AJR-M)
+        run: |
+          set -euo pipefail
+          DATE="${{ inputs.rating_date }}"
+          RANKING=$(ls posi-data/rankings/citation/citation-ranking-*.json.gz | sort | tail -1)
+          node scripts/rate-mature.mjs \
+            --corpus posi-data/corpus/core-collection.json \
+            --evidence-journals posi-data/evidence/journals \
+            --evidence-works posi-data/evidence/works \
+            --citation-ranking "$RANKING" \
+            --pci "$(ls -d posi-data/audits/pjr-seed-corpus/*/pci | sort | tail -1)" \
+            --out-corpus posi-data/corpus/core-collection.json \
+            --out-report work/rate-mature-report \
+            ${DATE:+--rating-date "$DATE"}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ajr-rerate-report
+          path: work/
+          if-no-files-found: ignore
+
+      - name: Open a pull request on posi-data
+        env:
+          GH_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
+        working-directory: posi-data
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Nothing changed"; exit 0
+          fi
+          MONTH=$(date -u +%Y-%m)
+          BRANCH="ajr-rerate/$MONTH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add corpus/core-collection.json evidence/journals evidence/works
+          git commit -m "AJR rerate $MONTH (Core Collection)"
+          git push --force origin "$BRANCH"
+          {
+            echo "Monthly AJR rerate of the Core Collection, from posi-engine's [ajr-rerate workflow]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            echo
+            echo '```json'
+            cat ../work/rerate-report/rerate-summary.json
+            echo
+            echo '```'
+            echo
+            echo 'AJR-M:'
+            echo
+            echo '```json'
+            cat ../work/rate-mature-report/rate-mature-summary.json
+            echo '```'
+            echo
+            echo "Per-journal detail: the run's ajr-rerate-report artifact (rerate-report/per-journal-comparison.csv, rate-mature-report/per-journal-mature.csv)."
+          } > ../pr-body.md
+          if [ "$(gh pr list --head "$BRANCH" --state open --json number -q length)" = "0" ]; then
+            gh pr create --head "$BRANCH" --base "$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)" \
+              --title "AJR rerate $MONTH (Core Collection)" --body-file ../pr-body.md
+          else
+            gh pr edit "$BRANCH" --body-file ../pr-body.md
+          fi
+
+      - name: Alert on failure
+        if: failure()
+        run: scripts/global/alert.sh "The monthly AJR rerate failed."

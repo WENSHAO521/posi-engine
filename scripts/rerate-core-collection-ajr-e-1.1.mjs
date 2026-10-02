@@ -130,7 +130,6 @@ function main() {
     rating_date: ratingDate.toISOString().slice(0, 10),
     rating_status_counts: statusCounts,
     ajr_rating_counts: ratingCounts,
-    official_cohort_eligible_count: officialEntries.length,
     journals_with_both_1_0_and_1_1_totals: scoreDeltas.length,
     mean_score_delta: scoreDeltas.length > 0 ? Math.round((scoreDeltas.reduce((s, d) => s + d.delta, 0) / scoreDeltas.length) * 100) / 100 : null,
   }

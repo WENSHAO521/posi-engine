@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Opens (or adds to) one issue on this repository when a global index run
 # needs attention, so GitHub notifies the maintainers by email.
-# Usage: scripts/global/alert.sh "<what happened>"
+# Usage: scripts/global/alert.sh "<what happened>"   (ALERT_TITLE overrides the issue title)
 set -uo pipefail
-TITLE="Global index: run needs attention"
+TITLE="${ALERT_TITLE:-Global index: run needs attention}"
 URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 BODY="$1
 
