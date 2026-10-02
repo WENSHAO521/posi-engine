@@ -1,0 +1,77 @@
+name: Evidence trial
+
+# Tries the evidence ETLs and AJR on a stratified sample of a corpus before
+# running them on the whole of it (scripts/sample-corpus.mjs): site crawl,
+# Crossref article sample, OpenAlex yearly output, then AJR-M (and AJR-E for
+# Early-Stage journals). Read only: nothing is written to posi-data; the
+# evidence and a summary (per website host: pages fetched / refused / timed
+# out, site coverage; AJR outcome and reasons) are the run's artifact and
+# its job summary.
+
+on:
+  workflow_dispatch:
+    inputs:
+      corpus:
+        description: 'posi-data corpus file'
+        default: 'corpus/global-benchmark.json'
+      n:
+        description: 'Sample size'
+        default: '50'
+
+permissions:
+  contents: read
+
+jobs:
+  trial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check out posi-data (read only)
+        uses: actions/checkout@v4
+        with:
+          repository: WENSHAO521/posi-data
+          path: posi-data
+
+      - name: Draw the sample
+        run: |
+          node scripts/sample-corpus.mjs --corpus "posi-data/${{ inputs.corpus }}" \
+            --n "${{ inputs.n }}" --out work/sample.json
+
+      - name: Site crawl
+        run: |
+          node scripts/run-evidence-etl.mjs --corpus work/sample.json \
+            --publisher-registry posi-data/evidence/publishers --out work/evidence
+
+      - name: Article sample
+        run: node scripts/run-works-etl.mjs --corpus work/sample.json --out work/works
+
+      - name: Yearly output
+        run: node scripts/run-output-history-etl.mjs --mature-only --corpus work/sample.json --out work/output
+
+      - name: AJR-M
+        run: |
+          node scripts/rate-mature.mjs --corpus work/sample.json \
+            --evidence-journals work/evidence/journals --evidence-works work/works/journals \
+            --evidence-output work/output/journals \
+            --citation-ranking "$(ls posi-data/rankings/citation/citation-ranking-*.json.gz | sort | tail -1)" \
+            --pci "$(ls -d posi-data/audits/pjr-seed-corpus/*/pci | sort | tail -1)" \
+            --out-corpus work/sample.rated.json --out-report work/rate-mature-report
+
+      - name: Summary
+        if: always()
+        run: |
+          node scripts/summarize-evidence-trial.mjs --sample work/sample.json \
+            --evidence-journals work/evidence/journals --evidence-works work/works/journals \
+            --mature-report work/rate-mature-report --out work/trial-summary.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-trial
+          path: work/
