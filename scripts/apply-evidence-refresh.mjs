@@ -10,24 +10,26 @@
  * a working rating into not_rateable for reasons that have nothing to do
  * with the journal. So a fresh file replaces the stored one only when
  *   - journals: at least one fetched page came back 'ok';
- *   - works:    the Crossref fetch returned 200.
+ *   - works:    the Crossref fetch returned 200;
+ *   - output:   the OpenAlex source record was read (counts_by_year set).
  * A journal with no stored snapshot always takes the fresh one.
  *
- * Exits 1 when no fresh file at all was usable (the run itself was broken),
- * so the scheduled rerate stops instead of rating from stale evidence
- * without anyone noticing.
+ * Exits 1, applying nothing, when no fresh file at all reached its source
+ * (the run itself was broken), so the scheduled rerate stops instead of
+ * rating from stale or empty evidence without anyone noticing.
  *
  * Usage:
- *   node scripts/apply-evidence-refresh.mjs --kind journals|works --from <ETL out>/journals --to <posi-data>/evidence/<kind>
+ *   node scripts/apply-evidence-refresh.mjs --kind journals|works|output --from <ETL out>/journals --to <posi-data>/evidence/<kind>
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'fs'
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
 export function reachedSource(kind, result) {
   if (kind === 'journals') return (result?.fetched_pages ?? []).some(p => p.fetch_status === 'ok')
   if (kind === 'works') return result?.crossref_status === 200
+  if (kind === 'output') return result?.counts_by_year != null
   throw new Error(`unknown evidence kind: ${kind}`)
 }
 
@@ -40,20 +42,23 @@ function main() {
   const kind = arg('kind')
   const from = resolve(arg('from'))
   const to = resolve(arg('to'))
+  const fresh = readdirSync(from).filter(f => f.endsWith('.json')).sort()
+    .map(file => ({ file, raw: readFileSync(join(from, file), 'utf-8') }))
+  for (const f of fresh) f.reached = reachedSource(kind, JSON.parse(f.raw))
+  if (fresh.length > 0 && !fresh.some(f => f.reached)) {
+    console.error(`No fresh ${kind} evidence reached its source (${fresh.length} files); the ETL run looks broken, nothing applied`)
+    process.exit(1)
+  }
+  mkdirSync(to, { recursive: true })
   let replaced = 0, added = 0
   const kept = []
-  for (const file of readdirSync(from).filter(f => f.endsWith('.json')).sort()) {
-    const raw = readFileSync(join(from, file), 'utf-8')
+  for (const { file, raw, reached } of fresh) {
     const target = join(to, file)
     if (!existsSync(target)) { writeFileSync(target, raw, 'utf-8'); added++; continue }
-    if (reachedSource(kind, JSON.parse(raw))) { writeFileSync(target, raw, 'utf-8'); replaced++; continue }
+    if (reached) { writeFileSync(target, raw, 'utf-8'); replaced++; continue }
     kept.push(file.replace(/\.json$/, ''))
   }
   console.log(`${kind}: ${replaced} replaced, ${added} added, ${kept.length} kept (source not reached)${kept.length ? ': ' + kept.join(', ') : ''}`)
-  if (replaced + added === 0 && kept.length > 0) {
-    console.error(`No fresh ${kind} evidence reached its source; the ETL run looks broken`)
-    process.exit(1)
-  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()

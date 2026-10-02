@@ -17,6 +17,12 @@ test('reachedSource: article sample needs a Crossref 200', () => {
   assert.equal(reachedSource('works', { crossref_status: null }), false)
 })
 
+test('reachedSource: output history needs the OpenAlex record read', () => {
+  assert.equal(reachedSource('output', { counts_by_year: { 2025: 3 } }), true)
+  assert.equal(reachedSource('output', { counts_by_year: {} }), true)
+  assert.equal(reachedSource('output', { counts_by_year: null, fetch_error: 'HTTP 403' }), false)
+})
+
 test('reachedSource: unknown kind throws', () => {
   assert.throws(() => reachedSource('publishers', {}))
 })

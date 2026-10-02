@@ -81,17 +81,43 @@ journals whose results predate PNCI-1.0 and rebuilds the rankings;
 `recheck_issns` rechecks multi-ISSN journals; `force_release` releases after a
 failed check has been reviewed.
 
+## The monthly AJR rerate
+
+`.github/workflows/ajr-rerate.yml` re-rates the Core Collection on the 7th of
+every month, after the journal directory, so lifecycle stages and AJR scores
+follow the calendar:
+
+| Step | What | Script |
+|---|---|---|
+| evidence | site crawl and article sample of every journal; yearly output of Mature journals (OpenAlex) | `run-evidence-etl.mjs`, `run-works-etl.mjs`, `run-output-history-etl.mjs` |
+| apply | a fresh file replaces the stored one in posi-data `evidence/` only if its source was reached; a run that reached nothing fails | `apply-evidence-refresh.mjs` |
+| AJR-E | `early_stage_rating` for Early-Stage journals, `not_applicable` with the current stage otherwise | `rerate-core-collection-ajr-e-1.1.mjs` |
+| AJR-M | `mature_rating` (posi-data `schema/rating.schema.json`) for Mature journals | `rate-mature.mjs` |
+| review | a pull request on posi-data, branch `ajr-rerate/<YYYY-MM>` | |
+
+Nothing reaches posi-data without that pull request being merged. The
+workflow needs the `POSI_DATA_TOKEN` secret (push and pull requests on
+posi-data); a failed run opens an issue here. `skip_crawl` re-rates from the
+stored evidence.
+
+AJR-M takes PNCI and the ranking category from the Citation Ranking edition,
+PCI / PCI-5 from the PCI audit, yearly output from `evidence/output/`, and
+everything else from the same evidence as AJR-E; how AJR-E's evidence items
+map onto AJR-M's is in posi-data
+[AJR-M-1.0-SPEC.md](https://github.com/WENSHAO521/posi-data/blob/master/AJR-M-1.0-SPEC.md)
+§ 12. The Core Collection has no Mature journal before December 2029.
+
 ## Modules
 
 | Area | Modules |
 |---|---|
 | Evaluation rules | `evaluation.mjs`, `citation-ranking.mjs`, `citation-ranking-check.mjs` |
 | Citation indicators | `pnci.mjs` (PNCI-1.0), `pci.mjs` (PCI / PCI-5), `pcs.mjs` + `pcs-resolver.mjs` (PCS-1.0) |
-| Lifecycle ratings | `lifecycle.mjs`, `first-publication-date.mjs`, `ajr-early-stage.mjs` (AJR-E-1.1), `ajr-mature.mjs` (AJR-M-1.0), `ajr-e-rerate.mjs`, `shared-dimensions.mjs`, `evidence-coverage.mjs` |
+| Lifecycle ratings | `lifecycle.mjs`, `first-publication-date.mjs`, `ajr-early-stage.mjs` (AJR-E-1.1), `ajr-mature.mjs` (AJR-M-1.0), `ajr-e-rerate.mjs`, `ajr-m-rerate.mjs`, `shared-dimensions.mjs`, `evidence-coverage.mjs` |
 | Admission | `pqf.mjs` (evidence pre-screen; the public status is `getPQFStatus`) |
 | Subjects | `psc-classify.mjs` (PSC-CROSSWALK), `cohort.mjs` |
 | Integrity and diagnostics | `citation-integrity.mjs`, `diagnostics.mjs` (MQS / IRS / CVI), `international-reach.mjs`: descriptive, never blended into a score |
-| Data acquisition | `works-fetch.mjs`, `works-resolver.mjs`, `evidence-*.mjs`, `crossref-document-type.mjs`, `openalex-document-type.mjs` |
+| Data acquisition | `works-fetch.mjs`, `works-resolver.mjs`, `evidence-*.mjs`, `output-history.mjs`, `crossref-document-type.mjs`, `openalex-document-type.mjs` |
 | Global index | `global-index.mjs`, `sharding.mjs`, `scripts/global/` |
 | Identity | `migration/` (normalize, dedupe, mint, supersession), `showjcr/` (bibliographic identity cross-check only) |
 | Releases | `release.mjs` (PJR manifests) |
@@ -110,6 +136,16 @@ npm test                                   # node --test, every module
 # Citation Ranking edition from a PCS ETL output directory
 node scripts/run-citation-ranking.mjs --pcs-dir work/pcs --corpus work/global-corpus.json \
   --taxonomy ../posi-data/taxonomy/psc/v1.0.json --out work/citation-ranking
+
+# AJR-M for the Mature journals of a corpus (writes mature_rating)
+node scripts/run-output-history-etl.mjs --mature-only \
+  --corpus ../posi-data/corpus/global-benchmark.json --out work/output
+node scripts/rate-mature.mjs --corpus ../posi-data/corpus/global-benchmark.json \
+  --evidence-journals ../posi-data/evidence/journals --evidence-works ../posi-data/evidence/works \
+  --evidence-output work/output/journals \
+  --citation-ranking ../posi-data/rankings/citation/citation-ranking-2026.json.gz \
+  --pci ../posi-data/audits/pjr-seed-corpus/pjr-seed-corpus-global993-2026/pci \
+  --out-corpus work/global-benchmark.rated.json --out-report work/rate-mature-report
 
 # Validate a posi-data checkout against its schemas
 node scripts/validate-against-schema.mjs ../posi-data

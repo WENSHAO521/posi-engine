@@ -12,7 +12,8 @@
  *     Citation Ranking edition (`rankings/citation/`), PCI/PCI-5 from the
  *     PCI audit (`collections/pci.json`); see buildCitationPeerSets().
  *   - Dimension 2 (output): yearly work counts for the last 5 complete
- *     years (OpenAlex `counts_by_year`, see output-history.mjs), the
+ *     years (posi-data `evidence/output/`, fetched from OpenAlex by
+ *     run-output-history-etl.mjs), the
  *     Article-Sample ETL's cadence and deposit timeliness, and two statuses
  *     derived from the article sample with AJR-E's own field set and rule.
  *   - Dimensions 3/4/6 (evidence): the site-crawl and Article-Sample
