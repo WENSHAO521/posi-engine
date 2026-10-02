@@ -1,0 +1,92 @@
+name: Refresh website URLs
+
+# Finds corpus records whose website_url no longer leads anywhere (or that
+# have none) and replaces them with the journal's OpenAlex homepage_url when
+# that one answers (scripts/refresh-website-urls.mjs). Run by hand before a
+# large evidence crawl. The change arrives as a pull request on posi-data
+# (branch website-urls/<date>) with the full report in its run's artifact;
+# nothing changes until it is reviewed and merged.
+#
+# Needs the POSI_DATA_TOKEN secret (see ajr-rerate.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      corpus:
+        description: 'posi-data corpus file'
+        default: 'corpus/global-benchmark.json'
+      only_rateable:
+        description: 'Only journals AJR can rate today (Early-Stage or Mature)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check out posi-data
+        uses: actions/checkout@v4
+        with:
+          repository: WENSHAO521/posi-data
+          path: posi-data
+          token: ${{ secrets.POSI_DATA_TOKEN }}
+
+      - name: Check website URLs
+        run: |
+          node scripts/refresh-website-urls.mjs \
+            --corpus "posi-data/${{ inputs.corpus }}" --out "posi-data/${{ inputs.corpus }}" \
+            --report work/website-urls ${{ inputs.only_rateable && '--only-rateable' || '' }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: website-urls
+          path: work/
+
+      - name: Open a pull request on posi-data
+        env:
+          GH_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
+        working-directory: posi-data
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No website URL changed"; exit 0
+          fi
+          DAY=$(date -u +%Y-%m-%d)
+          BRANCH="website-urls/$DAY"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add "${{ inputs.corpus }}"
+          git commit -m "Refresh website URLs ($DAY, ${{ inputs.corpus }})"
+          git push --force origin "$BRANCH"
+          node -e '
+            const r = require("../work/website-urls/website-urls.json")
+            const changed = r.rows.filter(x => x.action === "add" || x.action === "replace")
+            const dead = r.rows.filter(x => x.action === "dead_no_replacement")
+            const lines = [
+              `Website URLs refreshed from OpenAlex homepage_url by posi-engine [refresh-website-urls](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}).`,
+              "", "```json", JSON.stringify(r.counts, null, 2), "```", "",
+              `### Changed (${changed.length})`, "", "| Journal | Was | Now | Why |", "|---|---|---|---|",
+              ...changed.map(x => `| ${x.posi_id} ${x.title} | ${x.current ?? "–"} | ${x.url} | ${x.reason} |`),
+              "", `### Dead, no replacement (${dead.length})`, "", "| Journal | Address | Why |", "|---|---|---|",
+              ...dead.map(x => `| ${x.posi_id} ${x.title} | ${x.current} | ${x.reason} |`),
+            ]
+            require("fs").writeFileSync("../pr-body.md", lines.join("\n").slice(0, 60000))
+          '
+          if [ "$(gh pr list --head "$BRANCH" --state open --json number -q length)" = "0" ]; then
+            gh pr create --head "$BRANCH" --base "$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)" \
+              --title "Refresh website URLs ($DAY)" --body-file ../pr-body.md
+          else
+            gh pr edit "$BRANCH" --body-file ../pr-body.md
+          fi
