@@ -127,7 +127,11 @@ export async function fetchCrossrefWorksPage(issn, opts = {}) {
           continue
         }
         if (isRetryableOutcome(res.status) && attempt < maxAttempts) { await sleep(2 ** attempt * 500); continue }
-        return { status: res.status, totalResults: null, items: [], nextCursor: null, error: `HTTP ${res.status}` }
+        // Crossref says what was wrong with a request in the body of a 4xx
+        // (e.g. which select field it rejects); keep it, or a 400 is opaque.
+        let detail = ''
+        try { detail = (await res.text?.())?.trim().slice(0, 300) ?? '' } catch { /* body unreadable */ }
+        return { status: res.status, totalResults: null, items: [], nextCursor: null, error: `HTTP ${res.status}${detail ? `: ${detail}` : ''}` }
       }
       const data = await res.json()
       const message = data?.message ?? {}

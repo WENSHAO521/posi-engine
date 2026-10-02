@@ -188,7 +188,7 @@ async function main() {
     }
     results.push(result)
     writeFileSync(join(journalsOutDir, `${result.posi_id ?? j.journal_code}.json`), JSON.stringify(result, null, 2), 'utf-8')
-    console.log(`crossref_status=${result.crossref_status} works_fetched=${result.works_fetched} sample=${result.article_sample.length} (sufficient=${result.sample_adequacy.sufficient})`)
+    console.log(`crossref_status=${result.crossref_status} works_fetched=${result.works_fetched} sample=${result.article_sample.length} (sufficient=${result.sample_adequacy.sufficient})${result.crossref_status !== 200 && result.note ? ` -- ${result.note}` : ''}`)
   }
 
   const summary = {

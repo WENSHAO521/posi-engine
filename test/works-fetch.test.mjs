@@ -185,3 +185,10 @@ test('checkOaiPmhEndpoint: a non-ok HTTP response is reported, not silently ok:f
   assert.equal(result.ok, false)
   assert.equal(result.http_status, 404)
 })
+
+test('fetchCrossrefWorksPage: a 4xx keeps the start of Crossref\'s explanation', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 400, text: async () => '{"status":"failed","message":[{"type":"validation","message":"Field archive is not valid"}]}' })
+  const result = await fetchCrossrefWorksPage('1234-5678', { fetchImpl })
+  assert.equal(result.status, 400)
+  assert.ok(result.error.startsWith('HTTP 400: {"status":"failed"'), result.error)
+})
