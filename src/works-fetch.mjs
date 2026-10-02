@@ -92,17 +92,27 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
  */
 export const crossrefRequestStats = { requests: 0, rate_limited: 0, rate_limit_wait_ms: 0 }
 
+/** Sorts Crossref refuses to combine with a cursor (HTTP 400
+ * `sort-criteria-incompatible-with-cursor`, since 2026-10): a list sorted by
+ * one of these is paged with `offset` instead, which Crossref caps at
+ * CROSSREF_MAX_OFFSET records. */
+export const CURSOR_INCOMPATIBLE_SORTS = new Set(['issued', 'published', 'published-print', 'published-online'])
+export const CROSSREF_MAX_OFFSET = 10_000
+
 export async function fetchCrossrefWorksPage(issn, opts = {}) {
   const {
-    cursor = '*', rows = 50, filter = 'type:journal-article', sort = 'published', order = 'desc',
+    cursor = '*', offset, rows = 50, filter = 'type:journal-article', sort = 'published', order = 'desc',
     apiKey, mailto = DEFAULT_MAILTO, fetchImpl = fetch, timeoutMs = 15000, maxAttempts = 4,
     selectFields = WORKS_SELECT_FIELDS,
   } = opts
 
   const params = new URLSearchParams({
-    rows: String(rows), cursor, filter, sort, order,
+    rows: String(rows), filter, sort, order,
     select: selectFields.join(','), mailto,
   })
+  // A date sort cannot take a cursor (CURSOR_INCOMPATIBLE_SORTS): page it by offset.
+  if (offset != null || CURSOR_INCOMPATIBLE_SORTS.has(sort)) params.set('offset', String(offset ?? 0))
+  else params.set('cursor', cursor)
   if (apiKey) params.set('api_key', apiKey)
   const url = `${CROSSREF_BASE}/journals/${encodeURIComponent(issn)}/works?${params.toString()}`
 
@@ -127,7 +137,11 @@ export async function fetchCrossrefWorksPage(issn, opts = {}) {
           continue
         }
         if (isRetryableOutcome(res.status) && attempt < maxAttempts) { await sleep(2 ** attempt * 500); continue }
-        return { status: res.status, totalResults: null, items: [], nextCursor: null, error: `HTTP ${res.status}` }
+        // Crossref says what was wrong with a request in the body of a 4xx
+        // (e.g. which select field it rejects); keep it, or a 400 is opaque.
+        let detail = ''
+        try { detail = (await res.text?.())?.trim().slice(0, 300) ?? '' } catch { /* body unreadable */ }
+        return { status: res.status, totalResults: null, items: [], nextCursor: null, error: `HTTP ${res.status}${detail ? `: ${detail}` : ''}` }
       }
       const data = await res.json()
       const message = data?.message ?? {}
@@ -158,7 +172,7 @@ export async function fetchCrossrefWorksPage(issn, opts = {}) {
  * @returns {Promise<{ status: number|null, totalResults: number|null, error: string|null }>}
  */
 export async function fetchCrossrefTotalResults(issn, opts = {}) {
-  const page = await fetchCrossrefWorksPage(issn, { ...opts, rows: 0, cursor: undefined })
+  const page = await fetchCrossrefWorksPage(issn, { ...opts, rows: 0, offset: 0 })
   return { status: page.status, totalResults: page.totalResults, error: page.error }
 }
 
@@ -186,7 +200,8 @@ export const PCS_MAX_WORKS_PER_JOURNAL = 2_000_000
 
 /**
  * Pages through a journal's full (capped) Crossref works list, most-recent
- * first. Returns raw Crossref work objects, unnormalized — see
+ * first. Sorted by a date (the default), it pages by offset and stops at
+ * CROSSREF_MAX_OFFSET records; any other sort pages by cursor. Returns raw Crossref work objects, unnormalized — see
  * `works-resolver.mjs#normalizeCrossrefWork()` for the ajr-early-stage.mjs
  * input-contract shape.
  * @param {string} issn
@@ -194,13 +209,15 @@ export const PCS_MAX_WORKS_PER_JOURNAL = 2_000_000
  * @returns {Promise<{ status: number|null, totalResults: number|null, items: object[], error: string|null, pagesFetched: number }>}
  */
 export async function fetchAllCrossrefWorks(issn, opts = {}) {
-  const { maxItems = MAX_WORKS_FETCHED_PER_JOURNAL, rows = 50 } = opts
+  const { rows = 50, sort = 'published' } = opts
+  const byOffset = CURSOR_INCOMPATIBLE_SORTS.has(sort)
+  const maxItems = byOffset ? Math.min(opts.maxItems ?? MAX_WORKS_FETCHED_PER_JOURNAL, CROSSREF_MAX_OFFSET) : (opts.maxItems ?? MAX_WORKS_FETCHED_PER_JOURNAL)
   let cursor = '*'
   let items = []
   let totalResults = null
   let pagesFetched = 0
   for (;;) {
-    const page = await fetchCrossrefWorksPage(issn, { ...opts, cursor, rows })
+    const page = await fetchCrossrefWorksPage(issn, byOffset ? { ...opts, sort, rows, offset: items.length } : { ...opts, sort, rows, cursor })
     pagesFetched++
     if (page.status !== 200) {
       // A 404 legitimately means "no ISSN match" (not an error) -- surfaced
@@ -210,7 +227,8 @@ export async function fetchAllCrossrefWorks(issn, opts = {}) {
     }
     totalResults = page.totalResults
     items = items.concat(page.items)
-    const exhausted = page.items.length === 0 || !page.nextCursor || items.length >= maxItems
+    const exhausted = page.items.length === 0 || items.length >= maxItems
+      || (byOffset ? (totalResults != null && items.length >= totalResults) : !page.nextCursor)
     if (exhausted) {
       return { status: 200, totalResults, items: items.slice(0, maxItems), error: null, pagesFetched }
     }
