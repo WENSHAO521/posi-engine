@@ -50,9 +50,12 @@ export function publisherRewrites(journal) {
   return []
 }
 
-// Catalogues, archives and aggregators: Wikidata's "official website" often
-// holds one of these, and they answer, but they are not the journal's site.
-const CATALOG_HOSTS = /(^|\.)(books\.google\.[a-z.]+|google\.com|oclc\.org|worldcat\.org|hathitrust\.org|umi\.com|proquest\.com|jstor\.org|metapress\.com|uni-regensburg\.de|doaj\.org|issn\.org|ncbi\.nlm\.nih\.gov|archive\.org|wikipedia\.org|crossref\.org|ebscohost\.com)$/i
+// Catalogues, archives, permanent-link resolvers and aggregators: Wikidata's
+// "official website" often holds one of these, and they answer, but they are
+// not the journal's site. The last group are look-alike domains Wikidata
+// gives for journals that live elsewhere (journalallergy.com for Allergy,
+// which is on Wiley's platform).
+const CATALOG_HOSTS = /(^|\.)(books\.google\.[a-z.]+|google\.com|oclc\.org|purl\.org|purl\.fdlp\.gov|catalog\.gpo\.gov|worldcat\.org|hathitrust\.org|umi\.com|proquest\.com|jstor\.org|metapress\.com|uni-regensburg\.de|doaj\.org|issn\.org|ncbi\.nlm\.nih\.gov|archive\.org|wikipedia\.org|crossref\.org|ebscohost\.com|journalallergy\.com)$/i
 
 export function isCatalogUrl(url) {
   try { return CATALOG_HOSTS.test(new URL(url).hostname) } catch { return true }

@@ -73,7 +73,7 @@ test('decideWebsiteUrl: catalogue sites never replace an address, whatever they 
 })
 
 test('isCatalogUrl: catalogues and archives, not publisher platforms', () => {
-  for (const u of ['http://books.google.com/books?id=x', 'http://firstsearch.oclc.org', 'http://bibpurl.oclc.org/web/4624', 'http://catalog.hathitrust.org/Record/1', 'http://www.umi.com/proquest', 'http://www.jstor.org/journals/00223816.html', 'http://cec.metapress.com/content/1/', 'not a url']) assert.equal(isCatalogUrl(u), true, u)
+  for (const u of ['http://books.google.com/books?id=x', 'http://firstsearch.oclc.org', 'http://bibpurl.oclc.org/web/4624', 'http://catalog.hathitrust.org/Record/1', 'http://www.umi.com/proquest', 'http://www.jstor.org/journals/00223816.html', 'http://cec.metapress.com/content/1/', 'https://purl.fdlp.gov/GPO/gpo37184', 'https://journalallergy.com/', 'not a url']) assert.equal(isCatalogUrl(u), true, u)
   for (const u of ['https://academic.oup.com/bjr', 'https://link.springer.com/journal/11606', 'https://jamanetwork.com/journals/jamapediatrics']) assert.equal(isCatalogUrl(u), false, u)
 })
 
