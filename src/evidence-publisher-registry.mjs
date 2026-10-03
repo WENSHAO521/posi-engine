@@ -75,7 +75,9 @@ export const PENDING_INHERITABLE_CRITERION_IDS = Object.freeze([
  * @returns {boolean}
  */
 export function isWellFormedEntry(entry) {
-  if (typeof entry?.evidence_url !== 'string') return false
+  // Entries are matched to journals by publisher name (aliases add names, they do not replace it).
+  if (typeof entry?.publisher !== 'string' || entry.publisher.trim() === '') return false
+  if (typeof entry.evidence_url !== 'string') return false
   try {
     const u = new URL(entry.evidence_url)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
@@ -94,8 +96,8 @@ export function isWellFormedEntry(entry) {
  *   pending  - verified and well-formed, but its policy is inherited only
  *              from the next methodology version
  *   draft    - not (yet) verified: no verified_by / verified_at, or no URL
- *   invalid  - verified but unusable: unsupported policy_type or scope,
- *              or a malformed evidence_url / verified_at
+ *   invalid  - verified but unusable: no publisher name, an unsupported
+ *              policy_type or scope, or a malformed evidence_url / verified_at
  * @param {object} entry
  * @returns {'active'|'pending'|'draft'|'invalid'}
  */
