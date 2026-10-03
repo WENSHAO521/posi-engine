@@ -122,6 +122,8 @@ test('registryEntryStatus: what the ETL does with an entry', () => {
   assert.equal(registryEntryStatus(wellFormedEntry({ evidence_url: 'not a url' })), 'invalid')
   assert.equal(registryEntryStatus(wellFormedEntry({ scope: 'some_journals' })), 'invalid')
   assert.equal(registryEntryStatus(wellFormedEntry({ policy_type: 'access_model_disclosure' })), 'invalid')
+  assert.equal(registryEntryStatus(wellFormedEntry({ publisher: '' })), 'invalid')
+  assert.equal(registryEntryStatus(wellFormedEntry({ publisher: undefined })), 'invalid')
 })
 
 test('applyPublisherInheritance matches a journal recorded under one of the entry\'s aliases', () => {

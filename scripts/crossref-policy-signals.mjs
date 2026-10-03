@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * crossref-policy-signals.mjs — TRIAL, read only. For each journal of a
- * sample: the share of its Crossref articles of the last three years carrying policy-related
+ * sample: the share of its newest Crossref articles (up to --rows, from the last three years) carrying policy-related
  * deposits (src/crossref-policy-signals.mjs), and what the site evidence
  * coverage would become if those signals resolved the items the crawl could
  * not (unknown / blocked). Prints Markdown (job summary) and writes JSON.
@@ -43,9 +43,8 @@ async function main() {
       const page = await fetchCrossrefWorksPage(issn, { rows, offset: 0, sort: 'published', order: 'desc', filter: `type:journal-article,from-pub-date:${since},until-pub-date:${until}`, selectFields: CROSSREF_POLICY_SELECT_FIELDS })
       attempts.push({ issn, status: page.status, error: page.error })
       if (page.items.length) { works = page.items; break }
-      // Try the other ISSN only after a definitive empty answer; an outage
-      // is reported as such, never as "no articles".
-      if (page.status !== 200 && page.status !== 404) break
+      // Otherwise try the other ISSN: every attempt is kept, so a failure
+      // is still reported (crossref_failed) when neither yields articles.
     }
     const failed = !works.length && attempts.some(a => a.status !== 200 && a.status !== 404)
     const status = failed ? attempts.find(a => a.status !== 200 && a.status !== 404).status : attempts.at(-1)?.status ?? null
@@ -72,7 +71,7 @@ async function main() {
   const lines = [
     `## Crossref policy signals (trial, read only): ${out.length} journals`, '',
     `Candidate mapping (item ← signal, when ≥ ${MIN_SHARE * 100}% of ≥ ${MIN_ARTICLES} recent articles carry at least one of its signals; only unknown/blocked items are upgraded): ${Object.entries(CANDIDATE_MAPPING).map(([k, v]) => `${k} ← ${v.join(' or ')}`).join('; ')}.`, '',
-    `Recent Crossref articles (${since} to ${until}): any for ${count(out, r => r.shares.articles > 0)} of ${out.length} journals; at least ${MIN_ARTICLES} (enough to upgrade an item) for ${count(out, r => r.shares.articles >= MIN_ARTICLES)}; Crossref failed for ${count(out, r => r.crossref_failed)}.`, '',
+    `Sample: each journal's newest Crossref articles published ${since} to ${until}, at most ${rows} per journal (shares describe that sample, not every article of the period). Any articles for ${count(out, r => r.shares.articles > 0)} of ${out.length} journals; at least ${MIN_ARTICLES} (enough to upgrade an item) for ${count(out, r => r.shares.articles >= MIN_ARTICLES)}; Crossref failed for ${count(out, r => r.crossref_failed)}.`, '',
     '| Site coverage band | Before | After |', '|---|---|---|',
     ...['official', 'provisional', 'below'].map(b => `| ${b} | ${count(withEv, r => band(r.site_coverage_before) === b)} | ${count(withEv, r => band(r.site_coverage_after) === b)} |`),
     `| mean coverage | ${mean(withEv.map(r => r.site_coverage_before))}% | ${mean(withEv.map(r => r.site_coverage_after))}% |`, '',

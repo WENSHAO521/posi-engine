@@ -94,15 +94,17 @@ export function isWellFormedEntry(entry) {
  *   pending  - verified and well-formed, but its policy is inherited only
  *              from the next methodology version
  *   draft    - not (yet) verified: no verified_by / verified_at, or no URL
- *   invalid  - verified but unusable: unsupported policy_type or scope,
- *              or a malformed evidence_url / verified_at
+ *   invalid  - verified but unusable: no publisher name, an unsupported
+ *              policy_type or scope, or a malformed evidence_url / verified_at
  * @param {object} entry
  * @returns {'active'|'pending'|'draft'|'invalid'}
  */
 export function registryEntryStatus(entry) {
   const verified = typeof entry?.verified_by === 'string' && entry.verified_by.trim() !== ''
   if (!verified) return 'draft'
-  if (entry.scope !== 'all_journals' || !isWellFormedEntry(entry)) return 'invalid'
+  // The ETL matches entries to journals by publisher name: without one it can never apply.
+  const named = typeof entry.publisher === 'string' && entry.publisher.trim() !== ''
+  if (!named || entry.scope !== 'all_journals' || !isWellFormedEntry(entry)) return 'invalid'
   if (INHERITABLE_CRITERION_IDS.includes(entry.policy_type)) return 'active'
   if (PENDING_INHERITABLE_CRITERION_IDS.includes(entry.policy_type)) return 'pending'
   return 'invalid'
