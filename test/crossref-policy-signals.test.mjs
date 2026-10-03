@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { articleSignals, journalSignalShares, journalItemShares, applyCrossrefSignals, MIN_ARTICLES } from '../src/crossref-policy-signals.mjs'
 
 const full = {
-  license: [{ URL: 'http://creativecommons.org/licenses/by/4.0/' }],
+  license: [{ URL: 'http://creativecommons.org/licenses/by/4.0/', 'content-version': 'vor' }],
   'update-policy': 'http://dx.doi.org/10.1016/elsevier_cm_policy',
   assertion: [
     { name: 'received', label: 'Received', group: { name: 'publication_history' } },
@@ -29,6 +29,11 @@ test('journalSignalShares: share of articles per signal', () => {
   assert.equal(journalSignalShares([]).license, 0)
 })
 
+test('articleSignals: a text-and-data-mining licence alone is not the article licence', () => {
+  assert.equal(articleSignals({ license: [{ URL: 'https://www.elsevier.com/tdm/userlicense/1.0/', 'content-version': 'tdm' }] }).license, false)
+  assert.equal(articleSignals({ license: [{ URL: 'https://x/tdm', 'content-version': 'tdm' }, { URL: 'https://x/am', 'content-version': 'am' }] }).license, true)
+})
+
 test('applyCrossrefSignals: upgrades only unresolved mapped items, never a site verdict', () => {
   const items = [
     { id: 'corrections_retractions_policy', weight: 3, status: 'blocked' },
@@ -36,7 +41,7 @@ test('applyCrossrefSignals: upgrades only unresolved mapped items, never a site 
     { id: 'conflict_of_interest_policy', weight: 2, status: 'unknown' },
     { id: 'editorial_board_public', weight: 3, status: 'blocked' },
   ]
-  const shares = { articles: MIN_ARTICLES, copyright_licensing: 1, corrections_retractions_policy: 0.9, conflict_of_interest_policy: 0.2 }
+  const shares = { articles: MIN_ARTICLES, copyright_licensing: 1, corrections_retractions_policy: 0.9, conflict_of_interest_policy: 1 }
   const { items: out, upgraded } = applyCrossrefSignals(items, shares)
   assert.deepEqual(upgraded, ['corrections_retractions_policy'])
   assert.deepEqual(out.map(i => i.status), ['met', 'not_met', 'unknown', 'blocked'])
@@ -56,11 +61,10 @@ test('applyCrossrefSignals: too few articles changes nothing', () => {
   assert.deepEqual(applyCrossrefSignals(items, { articles: MIN_ARTICLES - 1, corrections_retractions_policy: 1 }).upgraded, [])
 })
 
-test('journalItemShares: alternative signals are OR-ed per article', () => {
-  const dates = { assertion: [{ name: 'received' }, { name: 'accepted' }] }
-  const review = { relation: { 'has-review': [{ id: 'x' }] } }
-  const works = [dates, dates, review, review, {}]
-  assert.equal(journalSignalShares(works).review_dates, 0.4)
-  assert.equal(journalSignalShares(works).open_review, 0.4)
-  assert.equal(journalItemShares(works).peer_review_process_disclosed, 0.8)
+test('journalItemShares: only the licence and Crossmark resolve items; article statements are reported only', () => {
+  const works = [full, full, {}, {}]
+  const items = journalItemShares(works)
+  assert.deepEqual(Object.keys(items).sort(), ['articles', 'copyright_licensing', 'corrections_retractions_policy'])
+  assert.equal(items.corrections_retractions_policy, 0.5)
+  assert.equal(journalSignalShares(works).coi, 0.5)
 })

@@ -78,7 +78,7 @@ test('REVIEW-CAUGHT GAP, FIXED: an entry with a malformed or non-http(s) evidenc
   assert.equal(nonHttp.find(i => i.id === 'publication_ethics_policy').status, 'unknown')
 })
 
-test('INHERITABLE_CRITERION_IDS: the thirteen publisher-wide policies of EC-1.1', () => {
+test('INHERITABLE_CRITERION_IDS: the twelve publisher-wide policies of EC-1.1', () => {
   assert.deepEqual([...INHERITABLE_CRITERION_IDS].sort(), [
     'advertising_sponsorship_disclosure',
     'ai_use_policy',
@@ -88,7 +88,6 @@ test('INHERITABLE_CRITERION_IDS: the thirteen publisher-wide policies of EC-1.1'
     'copyright_licensing',
     'corrections_retractions_policy',
     'data_availability_sharing',
-    'fee_disclosure',
     'human_animal_ethics_consent',
     'plagiarism_similarity_policy',
     'publication_ethics_policy',
@@ -100,20 +99,21 @@ test('journal-specific items are never inheritable', () => {
   for (const id of ['aims_scope_explicit', 'editorial_board_public', 'editor_identity_affiliation_verifiable',
     'peer_review_process_disclosed', 'reviewer_editorial_guidelines', 'author_guidelines',
     // a journal's access model differs within one publisher; other terms are not_applicable for every journal
-    'access_model_disclosure', 'other_applicable_terms']) {
+    'access_model_disclosure', 'fee_disclosure', 'other_applicable_terms']) {
     assert.ok(!INHERITABLE_CRITERION_IDS.includes(id), id)
   }
 })
 
 test('a publisher-wide policy added in EC-1.1 is inherited', () => {
-  const items = [{ id: 'fee_disclosure', weight: 1, status: 'blocked', source_url: null, retrieved_at: null }]
-  const registry = [wellFormedEntry({ policy_type: 'fee_disclosure' })]
+  const items = [{ id: 'complaints_appeals', weight: 1, status: 'blocked', source_url: null, retrieved_at: null }]
+  const registry = [wellFormedEntry({ policy_type: 'complaints_appeals' })]
   assert.equal(applyPublisherInheritance(items, 'Example Publisher', registry)[0].status, 'met')
 })
 
 test('registryEntryStatus: what the ETL does with an entry', () => {
   assert.equal(registryEntryStatus(wellFormedEntry()), 'active')
-  assert.equal(registryEntryStatus(wellFormedEntry({ policy_type: 'fee_disclosure' })), 'active')
+  assert.equal(registryEntryStatus(wellFormedEntry({ policy_type: 'complaints_appeals' })), 'active')
+  assert.equal(registryEntryStatus(wellFormedEntry({ policy_type: 'fee_disclosure' })), 'invalid')
   assert.equal(registryEntryStatus(wellFormedEntry({ verified_by: '' })), 'draft')
   assert.equal(registryEntryStatus(wellFormedEntry({ evidence_url: 'not a url' })), 'invalid')
   assert.equal(registryEntryStatus(wellFormedEntry({ scope: 'some_journals' })), 'invalid')

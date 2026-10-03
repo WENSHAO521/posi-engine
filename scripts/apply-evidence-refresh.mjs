@@ -9,13 +9,18 @@
  * has 0% coverage / an empty article sample, and copying it over would turn
  * a working rating into not_rateable for reasons that have nothing to do
  * with the journal. So a fresh file replaces the stored one only when
- *   - journals: at least one fetched page came back 'ok';
+ *   - journals: at least one fetched page came back 'ok', or the journal's
+ *               Crossref deposits were read (EC-1.1; a site that refuses
+ *               every request can still be resolved from them);
  *   - works:    the Crossref fetch returned 200;
  *   - output:   the OpenAlex source record was read (counts_by_year set).
  * A journal with no stored snapshot always takes the fresh one. A site
  * crawl that was cut short by its host (evidence_snapshot_status
  * partial_source_unavailable) never replaces a stored complete one: a few
- * timeouts on the day must not turn a rated journal not-rateable.
+ * timeouts on the day must not turn a rated journal not-rateable. Likewise,
+ * when the fresh run's Crossref fetch failed, the stored snapshot's
+ * Crossref-resolved items are carried over (mergeJournalSnapshot): an API
+ * outage must not undo evidence found before.
  *
  * Exits 1, applying nothing, when no fresh file at all reached its source
  * (the run itself was broken), so the scheduled rerate stops instead of
@@ -29,9 +34,13 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { evidenceSnapshotStatus } from '../src/evidence-fetch.mjs'
+import { evidenceCoverage } from '../src/evidence-coverage.mjs'
 
 export function reachedSource(kind, result) {
-  if (kind === 'journals') return (result?.fetched_pages ?? []).some(p => p.fetch_status === 'ok')
+  if (kind === 'journals') {
+    return (result?.fetched_pages ?? []).some(p => p.fetch_status === 'ok')
+      || (result?.crossref_evidence != null && !result.crossref_evidence.failed && result.crossref_evidence.articles > 0)
+  }
   if (kind === 'works') return result?.crossref_status === 200
   if (kind === 'output') return result?.counts_by_year != null
   throw new Error(`unknown evidence kind: ${kind}`)
@@ -49,6 +58,30 @@ export function shouldReplace(kind, fresh, stored) {
   if (kind === 'journals' && fresh.evidence_snapshot_status === 'partial_source_unavailable'
     && storedStatus(stored) === 'complete' && reachedSource('journals', stored)) return false
   return true
+}
+
+/**
+ * The journal snapshot to store: the fresh one, except that when its
+ * Crossref fetch failed, items the stored snapshot had resolved from
+ * Crossref (and the fresh one left unknown/blocked) are carried over, and
+ * the coverage recomputed.
+ * @param {object} fresh
+ * @param {object|null} stored
+ */
+export function mergeJournalSnapshot(fresh, stored) {
+  if (!stored || !fresh?.crossref_evidence?.failed) return fresh
+  const prior = new Map((stored.evidence_items ?? []).filter(i => i.source === 'crossref' && i.status === 'met').map(i => [i.id, i]))
+  if (!prior.size) return fresh
+  let carried = 0
+  const items = (fresh.evidence_items ?? []).map(i => {
+    const p = prior.get(i.id)
+    if (!p || !['unknown', 'blocked'].includes(i.status)) return i
+    carried++
+    return { ...p, carried_over_from: stored.snapshot_date ?? null }
+  })
+  if (!carried) return fresh
+  const coverage = evidenceCoverage(items)
+  return { ...fresh, evidence_items: items, coverage, site_evidence_coverage_percent: coverage.coverage_percent, crossref_evidence: { ...fresh.crossref_evidence, carried_over: carried } }
 }
 
 // A snapshot written before evidence_snapshot_status existed: infer it from
@@ -79,7 +112,12 @@ function main() {
   for (const { file, raw } of fresh) {
     const target = join(to, file)
     if (!existsSync(target)) { writeFileSync(target, raw, 'utf-8'); added++; continue }
-    if (shouldReplace(kind, JSON.parse(raw), JSON.parse(readFileSync(target, 'utf-8')))) { writeFileSync(target, raw, 'utf-8'); replaced++; continue }
+    const freshResult = JSON.parse(raw), stored = JSON.parse(readFileSync(target, 'utf-8'))
+    if (shouldReplace(kind, freshResult, stored)) {
+      writeFileSync(target, kind === 'journals' ? JSON.stringify(mergeJournalSnapshot(freshResult, stored), null, 2) : raw, 'utf-8')
+      replaced++
+      continue
+    }
     kept.push(file.replace(/\.json$/, ''))
   }
   console.log(`${kind}: ${replaced} replaced, ${added} added, ${kept.length} kept (source not reached, or cut short where a complete crawl is stored)${kept.length ? ': ' + kept.join(', ') : ''}`)

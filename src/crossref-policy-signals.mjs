@@ -10,7 +10,9 @@
  * Pure functions; the fetching is in crossref-policy-fetch.mjs.
  *
  * Per article (a raw Crossref work record):
- *   license        - a license URL is deposited
+ *   license        - a license URL deposited for the version of record or the
+ *                    accepted manuscript (content-version vor / am); a
+ *                    text-and-data-mining (tdm) licence alone does not count
  *   crossmark      - an update-policy (the Crossmark policy page) is deposited
  *   review_dates   - assertions give both a received and an accepted date
  *   open_review    - relation has-review (published peer review reports)
@@ -31,7 +33,7 @@ export function articleSignals(work) {
   const as = Array.isArray(work?.assertion) ? work.assertion : []
   const has = re => as.some(a => re.test(assertionText(a)))
   return {
-    license: Array.isArray(work?.license) && work.license.some(l => typeof l?.URL === 'string' && l.URL),
+    license: Array.isArray(work?.license) && work.license.some(l => typeof l?.URL === 'string' && l.URL && ['vor', 'am'].includes(String(l['content-version'] ?? '').toLowerCase())),
     crossmark: typeof work?.['update-policy'] === 'string' && work['update-policy'].length > 0,
     review_dates: has(/\breceived\b/) && has(/\baccepted\b/),
     open_review: Array.isArray(work?.relation?.['has-review']) && work.relation['has-review'].length > 0,
@@ -59,16 +61,16 @@ export function journalSignalShares(works) {
 /**
  * The trial's candidate mapping: evidence item -> signal that would count
  * as evidence for it, when at least MIN_SHARE of the sampled articles
- * carry it (AJR-SPEC.md § 8, from AJR-E-1.2). A license on the articles
- * does not say which access model the journal uses, so
- * access_model_disclosure is not resolved this way.
+ * carry it (AJR-SPEC.md § 8, from AJR-E-1.2). Only signals that state the
+ * journal's terms count: the copyright/reuse licence of its articles, and
+ * the Crossmark update policy, which is the corrections and retractions
+ * policy. Review dates, reviews and authors' COI / data statements describe
+ * articles, not the journal's policy or process, so they are reported
+ * (journalSignalShares) but resolve nothing; neither does the access model.
  */
 export const CROSSREF_EVIDENCE_MAPPING = Object.freeze({
   copyright_licensing: ['license'],
   corrections_retractions_policy: ['crossmark'],
-  peer_review_process_disclosed: ['review_dates', 'open_review'],
-  conflict_of_interest_policy: ['coi'],
-  data_availability_sharing: ['data'],
 })
 export const MIN_SHARE = 0.5
 export const MIN_ARTICLES = 20

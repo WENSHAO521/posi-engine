@@ -41,6 +41,7 @@
  *     --publisher-registry <path to evidence/publishers dir, optional> \
  *     --out <output dir> \
  *     [--limit N] [--concurrency 4] [--delay-ms 500] [--no-crossref]
+ *     [--rating-date YYYY-MM-DD]   (the Crossref sample ends on this date; default today)
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs'
@@ -105,10 +106,10 @@ async function fetchRobotsDisallowChecker(baseWebsiteUrl) {
  * then the journal's Crossref deposits (EC-1.1). Returns the items and a record of the
  * Crossref step.
  */
-async function resolveGaps(items, journal, { publisherRegistry, crossref }) {
+async function resolveGaps(items, journal, { publisherRegistry, crossref, ratingDate }) {
   let out = applyPublisherInheritance(items, journal.publisher, publisherRegistry)
   if (!crossref) return { items: out, crossref: null }
-  const sample = await fetchCrossrefPolicySample(journal)
+  const sample = await fetchCrossrefPolicySample(journal, { now: ratingDate })
   const shares = journalItemShares(sample.works)
   const applied = applyCrossrefSignals(out, shares, { sourceUrl: sample.sourceUrl, retrievedAt: new Date().toISOString() })
   return {
@@ -117,7 +118,7 @@ async function resolveGaps(items, journal, { publisherRegistry, crossref }) {
   }
 }
 
-async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, crossref }) {
+async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, crossref, ratingDate }) {
   const posiId = journal.posi_id
   const websiteUrl = journal.website_url
 
@@ -127,7 +128,7 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
     // an empty evidence_items array -- review-caught gap: downstream
     // consumers (AJR-E scoring, coverage aggregation) expect a consistent
     // per-journal shape regardless of whether a crawl was even possible.
-    const gaps = await resolveGaps(resolveAllCriteria([], null), journal, { publisherRegistry, crossref })
+    const gaps = await resolveGaps(resolveAllCriteria([], null), journal, { publisherRegistry, crossref, ratingDate })
     const evidenceItems = gaps.items
     const coverage = evidenceCoverage(evidenceItems)
     return {
@@ -148,7 +149,7 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
     // abort the whole batch. Review-caught gap: `new URL()` here was
     // unguarded, and main()'s loop had no try/catch around crawlJournal(),
     // so one bad URL among 1000 journals would have crashed the entire run.
-    const gaps = await resolveGaps(resolveAllCriteria([], null), journal, { publisherRegistry, crossref })
+    const gaps = await resolveGaps(resolveAllCriteria([], null), journal, { publisherRegistry, crossref, ratingDate })
     const evidenceItems = gaps.items
     const coverage = evidenceCoverage(evidenceItems)
     return {
@@ -213,7 +214,7 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
     fetchedPages = fetchedPages.concat(discoveredResults)
   }
 
-  const gaps = await resolveGaps(resolveAllCriteria(fetchedPages, websiteUrl), journal, { publisherRegistry, crossref })
+  const gaps = await resolveGaps(resolveAllCriteria(fetchedPages, websiteUrl), journal, { publisherRegistry, crossref, ratingDate })
   const evidenceItems = gaps.items
 
   const coverage = evidenceCoverage(evidenceItems)
@@ -258,6 +259,11 @@ async function main() {
   const concurrency = parseInt(arg('concurrency', '4'), 10)
   const delayMs = parseInt(arg('delay-ms', '500'), 10)
   const crossref = !process.argv.includes('--no-crossref')
+  const ratingDate = arg('rating-date') ? new Date(`${arg('rating-date')}T00:00:00Z`) : new Date()
+  if (Number.isNaN(ratingDate.getTime())) {
+    console.error(`--rating-date must be YYYY-MM-DD, got: ${arg('rating-date')}`)
+    process.exit(1)
+  }
 
   // Review-caught gap: an unvalidated concurrency (0, NaN, negative) makes
   // runBatch()'s `for (let i = 0; i < items.length; i += concurrency)`
@@ -289,7 +295,7 @@ async function main() {
     process.stdout.write(`[${i + 1}/${targets.length}] ${j.title} (${j.posi_id ?? 'NO POSI_ID'}) ... `)
     let result
     try {
-      result = await crawlJournal(j, { concurrency, delayMs, publisherRegistry, crossref })
+      result = await crawlJournal(j, { concurrency, delayMs, publisherRegistry, crossref, ratingDate })
     } catch (err) {
       // Defense in depth beyond crawlJournal()'s own malformed-URL guard --
       // one journal's unexpected failure must never abort a 1000-journal

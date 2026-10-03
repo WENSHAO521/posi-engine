@@ -20,11 +20,12 @@
  * (research integrity, corrections/retractions, authorship, COI, AI use,
  * data) inheritable since EC-1.0, and from EC-1.1 (AJR-E-1.2 / AJR-M-1.2)
  * the policies large publishers set for every journal at once (similarity
- * checking, human/animal ethics, complaints and appeals, fee policy,
- * copyright and licensing, ownership and contact, advertising).
+ * checking, human/animal ethics, complaints and appeals, copyright and
+ * licensing, ownership and contact, advertising).
  * Inherently journal-specific items (aims & scope, editorial board, editor
  * identity, peer-review process, reviewer guidelines, author guidelines,
- * publication frequency, a journal's access model or APC amount) and
+ * publication frequency, a journal's access model, and fee disclosure: what
+ * a journal charges differs between journals of one publisher) and
  * other_applicable_terms (not applicable to any journal) can never be
  * satisfied this way, no matter what a registry entry claims. Ids match
  * `evidence-resolver.mjs`'s EVIDENCE_CRITERIA verbatim. */
@@ -38,7 +39,6 @@ export const INHERITABLE_CRITERION_IDS = Object.freeze([
   'plagiarism_similarity_policy',
   'human_animal_ethics_consent',
   'complaints_appeals',
-  'fee_disclosure',
   'copyright_licensing',
   'publisher_ownership_contact',
   'advertising_sponsorship_disclosure',
