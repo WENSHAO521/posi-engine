@@ -75,7 +75,9 @@ export const PENDING_INHERITABLE_CRITERION_IDS = Object.freeze([
  * @returns {boolean}
  */
 export function isWellFormedEntry(entry) {
-  if (typeof entry?.evidence_url !== 'string') return false
+  // Entries are matched to journals by publisher name (aliases add names, they do not replace it).
+  if (typeof entry?.publisher !== 'string' || entry.publisher.trim() === '') return false
+  if (typeof entry.evidence_url !== 'string') return false
   try {
     const u = new URL(entry.evidence_url)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
@@ -102,9 +104,7 @@ export function isWellFormedEntry(entry) {
 export function registryEntryStatus(entry) {
   const verified = typeof entry?.verified_by === 'string' && entry.verified_by.trim() !== ''
   if (!verified) return 'draft'
-  // The ETL matches entries to journals by publisher name: without one it can never apply.
-  const named = typeof entry.publisher === 'string' && entry.publisher.trim() !== ''
-  if (!named || entry.scope !== 'all_journals' || !isWellFormedEntry(entry)) return 'invalid'
+  if (entry.scope !== 'all_journals' || !isWellFormedEntry(entry)) return 'invalid'
   if (INHERITABLE_CRITERION_IDS.includes(entry.policy_type)) return 'active'
   if (PENDING_INHERITABLE_CRITERION_IDS.includes(entry.policy_type)) return 'pending'
   return 'invalid'

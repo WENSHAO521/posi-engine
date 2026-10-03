@@ -36,7 +36,7 @@ async function main() {
   const since = new Date(Date.UTC(now.getUTCFullYear() - 3, now.getUTCMonth(), now.getUTCDate())).toISOString().slice(0, 10)
   const out = []
   for (const j of sample) {
-    const issns = [j.issn_online, j.issn_print].filter(Boolean)
+    const issns = [...new Set([j.issn_online, j.issn_print].filter(Boolean).map(i => String(i).trim().toUpperCase()))]
     let works = []
     const attempts = []
     for (const issn of issns) {

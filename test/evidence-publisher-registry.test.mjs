@@ -126,6 +126,11 @@ test('registryEntryStatus: what the ETL does with an entry', () => {
   assert.equal(registryEntryStatus(wellFormedEntry({ publisher: undefined })), 'invalid')
 })
 
+test('an entry without a publisher name is never inherited, even through an alias', () => {
+  const registry = [wellFormedEntry({ publisher: '', publisher_aliases: ['Example Publisher'] })]
+  assert.equal(applyPublisherInheritance(baseItems, 'Example Publisher', registry).find(i => i.id === 'publication_ethics_policy').status, 'unknown')
+})
+
 test('applyPublisherInheritance matches a journal recorded under one of the entry\'s aliases', () => {
   const registry = [wellFormedEntry({ publisher: 'Elsevier', publisher_aliases: ['Elsevier BV', 'Cell Press'] })]
   assert.equal(applyPublisherInheritance(baseItems, 'Cell Press', registry).find(i => i.id === 'publication_ethics_policy').status, 'met')
