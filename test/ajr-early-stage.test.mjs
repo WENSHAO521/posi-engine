@@ -22,8 +22,8 @@ import {
   TARGET_ARTICLE_SAMPLE_SIZE,
 } from '../src/ajr-early-stage.mjs'
 
-test('AJR_E_METHODOLOGY_VERSION is 1.1, not a silent overwrite of the published 1.0', () => {
-  assert.equal(AJR_E_METHODOLOGY_VERSION, 'AJR-E-1.1')
+test('AJR_E_METHODOLOGY_VERSION is 1.2: EC-1.1 evidence is a new version, never a silent overwrite of 1.1', () => {
+  assert.equal(AJR_E_METHODOLOGY_VERSION, 'AJR-E-1.2')
 })
 
 // ---- Dimension weights sum to 100 ----
@@ -239,7 +239,7 @@ test('scoreReachConcentration: sparse affiliation metadata gets a neutral defaul
 })
 
 // ---- Composite ----
-test('computeAjrE composes all seven dimensions and stamps methodology_version AJR-E-1.1', () => {
+test('computeAjrE composes all seven dimensions and stamps methodology_version AJR-E-1.2', () => {
   const articles = Array.from({ length: 30 }, (_, i) => makeArticle({ title: `Study ${i}`, issueOrPeriod: i < 15 ? 'A' : 'B' }))
   const result = computeAjrE({
     editorialGovernance: Object.fromEntries(EDITORIAL_GOVERNANCE_ITEMS.map(i => [i.id, 'met'])),
@@ -258,7 +258,7 @@ test('computeAjrE composes all seven dimensions and stamps methodology_version A
       advertising_sponsorship_disclosure: 'met', other_applicable_terms: 'met',
     },
   })
-  assert.equal(result.methodology_version, 'AJR-E-1.1')
+  assert.equal(result.methodology_version, 'AJR-E-1.2')
   assert.ok(result.total > 0 && result.total <= 100)
   assert.equal(result.subfactors.trn.score, 10)
   assert.equal(result.subfactors.egf.score, 15)

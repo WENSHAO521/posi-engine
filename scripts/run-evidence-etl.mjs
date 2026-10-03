@@ -29,12 +29,18 @@
  * `rating_status` is the AJR-E/AJR-M scoring step's job, once lifecycle +
  * PSC + article-sample data also exist for a journal.
  *
+ * After the crawl, items the site left unknown or blocked are resolved,
+ * in this order (AJR-SPEC.md § 8, EC-1.1): from a verified publisher
+ * registry entry, then from the journal's own Crossref deposits
+ * (src/crossref-policy-signals.mjs). --no-crossref skips the second step
+ * (the evidence trial uses it to compare with and without).
+ *
  * Usage:
  *   node scripts/run-evidence-etl.mjs \
  *     --corpus <path to corpus/core-collection.json> \
  *     --publisher-registry <path to evidence/publishers dir, optional> \
  *     --out <output dir> \
- *     [--limit N] [--concurrency 4] [--delay-ms 500]
+ *     [--limit N] [--concurrency 4] [--delay-ms 500] [--no-crossref]
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs'
@@ -43,6 +49,8 @@ import { fetchWithStatus, isPathDisallowedByRobots, evidenceSnapshotStatus } fro
 import { candidateUrls, discoverLinks } from '../src/evidence-page-discovery.mjs'
 import { resolveAllCriteria, EVIDENCE_CRITERIA } from '../src/evidence-resolver.mjs'
 import { applyPublisherInheritance } from '../src/evidence-publisher-registry.mjs'
+import { journalItemShares, applyCrossrefSignals } from '../src/crossref-policy-signals.mjs'
+import { fetchCrossrefPolicySample } from '../src/crossref-policy-fetch.mjs'
 import { evidenceCoverage, dimensionScore, EVIDENCE_COVERAGE_METHODOLOGY_VERSION } from '../src/evidence-coverage.mjs'
 
 const USER_AGENT = 'POSI-EvidenceETL/1.0 (+https://posi.panorama-sg.com; posi@panorama-sg.com)'
@@ -92,7 +100,24 @@ async function fetchRobotsDisallowChecker(baseWebsiteUrl) {
   return path => isPathDisallowedByRobots(robotsTxt, path, USER_AGENT)
 }
 
-async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry }) {
+/**
+ * Resolves what the site left unknown/blocked: publisher registry first,
+ * then the journal's Crossref deposits (EC-1.1). Returns the items and a record of the
+ * Crossref step.
+ */
+async function resolveGaps(items, journal, { publisherRegistry, crossref }) {
+  let out = applyPublisherInheritance(items, journal.publisher, publisherRegistry)
+  if (!crossref) return { items: out, crossref: null }
+  const sample = await fetchCrossrefPolicySample(journal)
+  const shares = journalItemShares(sample.works)
+  const applied = applyCrossrefSignals(out, shares, { sourceUrl: sample.sourceUrl, retrievedAt: new Date().toISOString() })
+  return {
+    items: applied.items,
+    crossref: { articles: sample.works.length, since: sample.since, until: sample.until, failed: sample.failed, attempts: sample.attempts, item_shares: shares, upgraded: applied.upgraded },
+  }
+}
+
+async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, crossref }) {
   const posiId = journal.posi_id
   const websiteUrl = journal.website_url
 
@@ -102,11 +127,12 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry }
     // an empty evidence_items array -- review-caught gap: downstream
     // consumers (AJR-E scoring, coverage aggregation) expect a consistent
     // per-journal shape regardless of whether a crawl was even possible.
-    const evidenceItems = resolveAllCriteria([], null)
+    const gaps = await resolveGaps(resolveAllCriteria([], null), journal, { publisherRegistry, crossref })
+    const evidenceItems = gaps.items
     const coverage = evidenceCoverage(evidenceItems)
     return {
       posi_id: posiId, journal_code: journal.journal_code, title: journal.title,
-      website_url: null, fetched_pages: [], evidence_items: evidenceItems,
+      website_url: null, fetched_pages: [], evidence_items: evidenceItems, crossref_evidence: gaps.crossref,
       coverage, site_evidence_coverage_percent: coverage.coverage_percent,
       evidence_methodology_version: EVIDENCE_COVERAGE_METHODOLOGY_VERSION,
       snapshot_date: new Date().toISOString().slice(0, 10),
@@ -122,11 +148,12 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry }
     // abort the whole batch. Review-caught gap: `new URL()` here was
     // unguarded, and main()'s loop had no try/catch around crawlJournal(),
     // so one bad URL among 1000 journals would have crashed the entire run.
-    const evidenceItems = resolveAllCriteria([], null)
+    const gaps = await resolveGaps(resolveAllCriteria([], null), journal, { publisherRegistry, crossref })
+    const evidenceItems = gaps.items
     const coverage = evidenceCoverage(evidenceItems)
     return {
       posi_id: posiId, journal_code: journal.journal_code, title: journal.title,
-      website_url: websiteUrl, fetched_pages: [], evidence_items: evidenceItems,
+      website_url: websiteUrl, fetched_pages: [], evidence_items: evidenceItems, crossref_evidence: gaps.crossref,
       coverage, site_evidence_coverage_percent: coverage.coverage_percent,
       evidence_methodology_version: EVIDENCE_COVERAGE_METHODOLOGY_VERSION,
       snapshot_date: new Date().toISOString().slice(0, 10),
@@ -186,8 +213,8 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry }
     fetchedPages = fetchedPages.concat(discoveredResults)
   }
 
-  let evidenceItems = resolveAllCriteria(fetchedPages, websiteUrl)
-  evidenceItems = applyPublisherInheritance(evidenceItems, journal.publisher, publisherRegistry)
+  const gaps = await resolveGaps(resolveAllCriteria(fetchedPages, websiteUrl), journal, { publisherRegistry, crossref })
+  const evidenceItems = gaps.items
 
   const coverage = evidenceCoverage(evidenceItems)
 
@@ -205,6 +232,7 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry }
     website_url: websiteUrl,
     fetched_pages: fetchedPages.map(p => ({ url: p.url, fetch_status: p.fetch_status, http_status: p.http_status })),
     evidence_items: evidenceItems,
+    crossref_evidence: gaps.crossref,
     dimension_scores: dimensionScores,
     coverage,
     site_evidence_coverage_percent: coverage.coverage_percent,
@@ -229,6 +257,7 @@ async function main() {
   const limit = arg('limit') ? parseInt(arg('limit'), 10) : null
   const concurrency = parseInt(arg('concurrency', '4'), 10)
   const delayMs = parseInt(arg('delay-ms', '500'), 10)
+  const crossref = !process.argv.includes('--no-crossref')
 
   // Review-caught gap: an unvalidated concurrency (0, NaN, negative) makes
   // runBatch()'s `for (let i = 0; i < items.length; i += concurrency)`
@@ -260,7 +289,7 @@ async function main() {
     process.stdout.write(`[${i + 1}/${targets.length}] ${j.title} (${j.posi_id ?? 'NO POSI_ID'}) ... `)
     let result
     try {
-      result = await crawlJournal(j, { concurrency, delayMs, publisherRegistry })
+      result = await crawlJournal(j, { concurrency, delayMs, publisherRegistry, crossref })
     } catch (err) {
       // Defense in depth beyond crawlJournal()'s own malformed-URL guard --
       // one journal's unexpected failure must never abort a 1000-journal

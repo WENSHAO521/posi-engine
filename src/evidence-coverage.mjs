@@ -26,7 +26,7 @@
  * journal), per the framework's Transparency-dimension note.
  */
 
-export const EVIDENCE_COVERAGE_METHODOLOGY_VERSION = 'EC-1.0'
+export const EVIDENCE_COVERAGE_METHODOLOGY_VERSION = 'EC-1.1'
 
 export const EVIDENCE_STATUSES = Object.freeze([
   'met',

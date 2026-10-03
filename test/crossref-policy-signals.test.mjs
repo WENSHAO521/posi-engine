@@ -40,6 +40,15 @@ test('applyCrossrefSignals: upgrades only unresolved mapped items, never a site 
   const { items: out, upgraded } = applyCrossrefSignals(items, shares)
   assert.deepEqual(upgraded, ['corrections_retractions_policy'])
   assert.deepEqual(out.map(i => i.status), ['met', 'not_met', 'unknown', 'blocked'])
+  assert.equal(out[0].source, 'crossref')
+})
+
+test('applyCrossrefSignals: records provenance; never resolves the access model', () => {
+  const items = [{ id: 'copyright_licensing', weight: 2, status: 'blocked' }, { id: 'access_model_disclosure', weight: 1, status: 'blocked' }]
+  const shares = { articles: 100, copyright_licensing: 1, access_model_disclosure: 1 }
+  const { items: out } = applyCrossrefSignals(items, shares, { sourceUrl: 'https://api.crossref.org/journals/1234-5678/works', retrievedAt: '2026-11-07T00:00:00Z' })
+  assert.deepEqual([out[0].status, out[0].source_url, out[0].crossref_share, out[0].crossref_articles], ['met', 'https://api.crossref.org/journals/1234-5678/works', 1, 100])
+  assert.equal(out[1].status, 'blocked')
 })
 
 test('applyCrossrefSignals: too few articles changes nothing', () => {

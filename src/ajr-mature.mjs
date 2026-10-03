@@ -45,8 +45,10 @@ import { percentileMidrank } from './quartile-tracks.mjs'
 
 // AJR-M-1.1: the 1.0 formulas plus the input rules of AJR-M-1.0-SPEC.md
 // § 11 (evidence mapping, 80% structural share, 20-peer percentiles),
-// which change scores and so carry their own version.
-export const AJR_M_METHODOLOGY_VERSION = 'AJR-M-1.1'
+// which change scores and so carry their own version. AJR-M-1.2: the same
+// formulas over EC-1.1 evidence (publisher-wide policies and the journal's
+// Crossref deposits resolve items the site could not; AJR-SPEC.md § 8).
+export const AJR_M_METHODOLOGY_VERSION = 'AJR-M-1.2'
 
 export function clamp(v, max) { return Math.max(0, Math.min(v, max)) }
 function round2(n) { return Math.round(n * 100) / 100 }
