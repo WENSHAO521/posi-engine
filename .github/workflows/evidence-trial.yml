@@ -55,6 +55,7 @@ jobs:
       # dates, COI / data statements) would add where the crawl was refused.
       # Reported, never scored (src/crossref-policy-signals.mjs).
       - name: Crossref policy signals
+        continue-on-error: true   # a diagnostic comparison: never blocks the trial
         run: |
           node scripts/crossref-policy-signals.mjs --sample work/sample.json \
             --evidence-journals work/evidence/journals --out work/crossref-policy-signals.json >> "$GITHUB_STEP_SUMMARY"

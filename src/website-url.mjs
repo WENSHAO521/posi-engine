@@ -89,7 +89,7 @@ export function pageMentionsTitle(body, title) {
  */
 function usable(c) {
   if (!c?.url || isCatalogUrl(c.url)) return false
-  return c.strict ? c.check?.fetch_status === 'ok' && c.check?.mentions_title === true : liveness(c.check) === 'alive'
+  return c.strict ? c.check?.http_status === 200 && c.check?.mentions_title === true : liveness(c.check) === 'alive'
 }
 
 /**

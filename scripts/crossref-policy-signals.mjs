@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * crossref-policy-signals.mjs — TRIAL, read only. For each journal of a
- * sample: the share of its recent Crossref articles carrying policy-related
+ * sample: the share of its Crossref articles of the last three years carrying policy-related
  * deposits (src/crossref-policy-signals.mjs), and what the site evidence
  * coverage would become if those signals resolved the items the crawl could
  * not (unknown / blocked). Prints Markdown (job summary) and writes JSON.
@@ -15,7 +15,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join, resolve, dirname } from 'path'
 import { fetchCrossrefWorksPage } from '../src/works-fetch.mjs'
-import { journalSignalShares, applyCrossrefSignals, CROSSREF_POLICY_SELECT_FIELDS, CANDIDATE_MAPPING, MIN_SHARE, MIN_ARTICLES } from '../src/crossref-policy-signals.mjs'
+import { journalSignalShares, journalItemShares, applyCrossrefSignals, CROSSREF_POLICY_SELECT_FIELDS, CANDIDATE_MAPPING, MIN_SHARE, MIN_ARTICLES } from '../src/crossref-policy-signals.mjs'
 import { evidenceCoverage, EC_OFFICIAL_THRESHOLD, EC_PROVISIONAL_THRESHOLD } from '../src/evidence-coverage.mjs'
 
 function arg(name, fallback = null) {
@@ -30,23 +30,33 @@ async function main() {
   const sample = load(resolve(arg('sample')))
   const evDir = resolve(arg('evidence-journals'))
   const rows = Number(arg('rows', '100'))
-  const since = `${new Date().getUTCFullYear() - 3}-01-01`
+  // Exactly the last three years up to today: no forthcoming records.
+  const now = new Date()
+  const until = now.toISOString().slice(0, 10)
+  const since = new Date(Date.UTC(now.getUTCFullYear() - 3, now.getUTCMonth(), now.getUTCDate())).toISOString().slice(0, 10)
   const out = []
   for (const j of sample) {
     const issns = [j.issn_online, j.issn_print].filter(Boolean)
-    let works = [], status = null
+    let works = []
+    const attempts = []
     for (const issn of issns) {
-      const page = await fetchCrossrefWorksPage(issn, { rows, offset: 0, sort: 'published', order: 'desc', filter: `type:journal-article,from-pub-date:${since}`, selectFields: CROSSREF_POLICY_SELECT_FIELDS })
-      status = page.status
+      const page = await fetchCrossrefWorksPage(issn, { rows, offset: 0, sort: 'published', order: 'desc', filter: `type:journal-article,from-pub-date:${since},until-pub-date:${until}`, selectFields: CROSSREF_POLICY_SELECT_FIELDS })
+      attempts.push({ issn, status: page.status, error: page.error })
       if (page.items.length) { works = page.items; break }
+      // Try the other ISSN only after a definitive empty answer; an outage
+      // is reported as such, never as "no articles".
+      if (page.status !== 200 && page.status !== 404) break
     }
+    const failed = !works.length && attempts.some(a => a.status !== 200 && a.status !== 404)
+    const status = failed ? attempts.find(a => a.status !== 200 && a.status !== 404).status : attempts.at(-1)?.status ?? null
     const shares = journalSignalShares(works)
+    const itemShares = journalItemShares(works)
     const ev = load(join(evDir, `${j.posi_id}.json`))
     const items = ev?.evidence_items ?? []
     const before = items.length ? evidenceCoverage(items).coverage_percent : null
-    const { items: after, upgraded } = applyCrossrefSignals(items, shares)
+    const { items: after, upgraded } = applyCrossrefSignals(items, itemShares)
     const afterPct = items.length ? evidenceCoverage(after).coverage_percent : null
-    out.push({ posi_id: j.posi_id, title: j.title, publisher: j.publisher ?? null, host: hostOf(j.website_url), crossref_status: status, shares, site_coverage_before: before, site_coverage_after: afterPct, upgraded })
+    out.push({ posi_id: j.posi_id, title: j.title, publisher: j.publisher ?? null, host: hostOf(j.website_url), crossref_status: status, crossref_failed: failed, crossref_attempts: attempts, shares, item_shares: itemShares, site_coverage_before: before, site_coverage_after: afterPct, upgraded })
     console.error(`${j.posi_id} ${j.title}: ${works.length} articles; coverage ${before} -> ${afterPct} (+${upgraded.join(', ') || 'nothing'})`)
   }
 
@@ -61,8 +71,8 @@ async function main() {
   const md = v => String(v ?? '–').replace(/\|/g, '\\|')
   const lines = [
     `## Crossref policy signals (trial, read only): ${out.length} journals`, '',
-    `Candidate mapping (item ← signal, when ≥ ${MIN_SHARE * 100}% of ≥ ${MIN_ARTICLES} recent articles carry it; only unknown/blocked items are upgraded): ${Object.entries(CANDIDATE_MAPPING).map(([k, v]) => `${k} ← ${v.join(' or ')}`).join('; ')}.`, '',
-    `Journals with Crossref articles: ${count(out, r => r.shares.articles >= MIN_ARTICLES)} of ${out.length}.`, '',
+    `Candidate mapping (item ← signal, when ≥ ${MIN_SHARE * 100}% of ≥ ${MIN_ARTICLES} recent articles carry at least one of its signals; only unknown/blocked items are upgraded): ${Object.entries(CANDIDATE_MAPPING).map(([k, v]) => `${k} ← ${v.join(' or ')}`).join('; ')}.`, '',
+    `Recent Crossref articles (${since} to ${until}): any for ${count(out, r => r.shares.articles > 0)} of ${out.length} journals; at least ${MIN_ARTICLES} (enough to upgrade an item) for ${count(out, r => r.shares.articles >= MIN_ARTICLES)}; Crossref failed for ${count(out, r => r.crossref_failed)}.`, '',
     '| Site coverage band | Before | After |', '|---|---|---|',
     ...['official', 'provisional', 'below'].map(b => `| ${b} | ${count(withEv, r => band(r.site_coverage_before) === b)} | ${count(withEv, r => band(r.site_coverage_after) === b)} |`),
     `| mean coverage | ${mean(withEv.map(r => r.site_coverage_before))}% | ${mean(withEv.map(r => r.site_coverage_after))}% |`, '',
