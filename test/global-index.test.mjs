@@ -111,3 +111,19 @@ test('the ISSN-L is the ISSN the PCS ETL queries', () => {
   assert.equal(rec.issn_online, '0140-6736')
   assert.equal(rec.issns[0], '0140-6736')
 })
+
+test('buildGlobalCorpus: Crossref publisher fills a journal OpenAlex has none for', () => {
+  const oa = [fromOpenAlexSource({ id: 'https://openalex.org/S1', display_name: 'No Host', issn_l: '1234-5678', issn: ['1234-5678'], host_organization_name: null })]
+  const oaWithHost = [fromOpenAlexSource({ id: 'https://openalex.org/S2', display_name: 'Has Host', issn_l: '2222-3333', issn: ['2222-3333'], host_organization_name: 'OA Publisher' })]
+  const cr = [
+    fromCrossrefJournal({ title: 'No Host', publisher: ' Crossref Member ', ISSN: ['1234-5678'] }),
+    fromCrossrefJournal({ title: 'Has Host', publisher: 'Other Name', ISSN: ['2222-3333'] }),
+    fromCrossrefJournal({ title: 'Crossref only', publisher: 'CR Only Pub', ISSN: ['4444-5555'] }),
+  ]
+  const out = Object.fromEntries(buildGlobalCorpus([...oa, ...oaWithHost], cr).map(r => [r.title, r]))
+  assert.deepEqual([out['No Host'].publisher, out['No Host'].publisher_source], ['Crossref Member', 'crossref'])
+  assert.deepEqual([out['Has Host'].publisher, out['Has Host'].publisher_source], ['OA Publisher', 'openalex'], 'OpenAlex keeps precedence')
+  assert.deepEqual([out['Crossref only'].publisher, out['Crossref only'].publisher_source], ['CR Only Pub', 'crossref'])
+  const none = buildGlobalCorpus([fromOpenAlexSource({ id: 'S3', display_name: 'Nothing', issn_l: '6666-7777', issn: ['6666-7777'] })], [])
+  assert.deepEqual([none[0].publisher, none[0].publisher_source], [null, null])
+})
