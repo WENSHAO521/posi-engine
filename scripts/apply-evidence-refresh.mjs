@@ -34,11 +34,14 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { evidenceSnapshotStatus } from '../src/evidence-fetch.mjs'
-import { evidenceCoverage } from '../src/evidence-coverage.mjs'
+import { evidenceCoverage, dimensionScore } from '../src/evidence-coverage.mjs'
+import { EVIDENCE_CRITERIA } from '../src/evidence-resolver.mjs'
+
+const reachedSite = result => (result?.fetched_pages ?? []).some(p => p.fetch_status === 'ok')
 
 export function reachedSource(kind, result) {
   if (kind === 'journals') {
-    return (result?.fetched_pages ?? []).some(p => p.fetch_status === 'ok')
+    return reachedSite(result)
       || (result?.crossref_evidence != null && !result.crossref_evidence.failed && result.crossref_evidence.articles > 0)
   }
   if (kind === 'works') return result?.crossref_status === 200
@@ -55,22 +58,29 @@ export function reachedSource(kind, result) {
 export function shouldReplace(kind, fresh, stored) {
   if (!stored) return true
   if (!reachedSource(kind, fresh)) return false
+  // The guard compares site crawls: a stored snapshot that reached only
+  // Crossref is not a complete crawl to protect.
   if (kind === 'journals' && fresh.evidence_snapshot_status === 'partial_source_unavailable'
-    && storedStatus(stored) === 'complete' && reachedSource('journals', stored)) return false
+    && storedStatus(stored) === 'complete' && reachedSite(stored)) return false
   return true
 }
 
 /**
  * The journal snapshot to store: the fresh one, except that when its
  * Crossref fetch failed, items the stored snapshot had resolved from
- * Crossref (and the fresh one left unknown/blocked) are carried over, and
- * the coverage recomputed.
+ * Crossref (and the fresh one left unknown/blocked) are carried over, as
+ * long as the sample they came from still ends inside the fresh run's
+ * three-year window (crossref_until between its since and until): evidence
+ * from after the rating date, or aged out of the window, is not carried.
+ * Coverage and dimension scores are recomputed.
  * @param {object} fresh
  * @param {object|null} stored
  */
 export function mergeJournalSnapshot(fresh, stored) {
   if (!stored || !fresh?.crossref_evidence?.failed) return fresh
-  const prior = new Map((stored.evidence_items ?? []).filter(i => i.source === 'crossref' && i.status === 'met').map(i => [i.id, i]))
+  const { since, until } = fresh.crossref_evidence
+  const inWindow = i => typeof i.crossref_until === 'string' && since && until && i.crossref_until >= since && i.crossref_until <= until
+  const prior = new Map((stored.evidence_items ?? []).filter(i => i.source === 'crossref' && i.status === 'met' && inWindow(i)).map(i => [i.id, i]))
   if (!prior.size) return fresh
   let carried = 0
   const items = (fresh.evidence_items ?? []).map(i => {
@@ -81,7 +91,16 @@ export function mergeJournalSnapshot(fresh, stored) {
   })
   if (!carried) return fresh
   const coverage = evidenceCoverage(items)
-  return { ...fresh, evidence_items: items, coverage, site_evidence_coverage_percent: coverage.coverage_percent, crossref_evidence: { ...fresh.crossref_evidence, carried_over: carried } }
+  const dimensionScores = {}
+  for (const dim of Object.keys(fresh.dimension_scores ?? {})) {
+    const dimItems = items.filter(i => EVIDENCE_CRITERIA.find(c => c.id === i.id)?.dimension === dim)
+    dimensionScores[dim] = dimensionScore(dimItems, dimItems.reduce((s, i) => s + i.weight, 0))
+  }
+  return {
+    ...fresh, evidence_items: items, coverage, site_evidence_coverage_percent: coverage.coverage_percent,
+    ...(fresh.dimension_scores ? { dimension_scores: dimensionScores } : {}),
+    crossref_evidence: { ...fresh.crossref_evidence, carried_over: carried },
+  }
 }
 
 // A snapshot written before evidence_snapshot_status existed: infer it from

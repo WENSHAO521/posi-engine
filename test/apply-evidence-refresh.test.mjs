@@ -62,10 +62,10 @@ test('reachedSource: a journal whose site refused everything is reached when its
 
 test('mergeJournalSnapshot: a failed Crossref fetch keeps the Crossref evidence found before', () => {
   const stored = { snapshot_date: '2026-10-07', evidence_items: [
-    { id: 'corrections_retractions_policy', weight: 3, status: 'met', source: 'crossref' },
-    { id: 'copyright_licensing', weight: 2, status: 'met', source: 'crossref' },
+    { id: 'corrections_retractions_policy', weight: 3, status: 'met', source: 'crossref', crossref_until: '2026-10-07' },
+    { id: 'copyright_licensing', weight: 2, status: 'met', source: 'crossref', crossref_until: '2026-10-07' },
   ] }
-  const fresh = { crossref_evidence: { failed: true, articles: 0 }, evidence_items: [
+  const fresh = { crossref_evidence: { failed: true, articles: 0, since: '2023-11-07', until: '2026-11-07' }, dimension_scores: { research_integrity: null }, evidence_items: [
     { id: 'corrections_retractions_policy', weight: 3, status: 'blocked' },
     { id: 'copyright_licensing', weight: 2, status: 'not_met' },
   ] }
@@ -74,6 +74,23 @@ test('mergeJournalSnapshot: a failed Crossref fetch keeps the Crossref evidence 
   assert.equal(merged.evidence_items[0].carried_over_from, '2026-10-07')
   assert.equal(merged.crossref_evidence.carried_over, 1)
   assert.equal(merged.site_evidence_coverage_percent, 100)
+  assert.ok(merged.dimension_scores.research_integrity, 'dimension scores recomputed from the merged items')
   const ok = { ...fresh, crossref_evidence: { failed: false, articles: 50 } }
   assert.equal(mergeJournalSnapshot(ok, stored), ok, 'a successful fetch replaces as usual')
+})
+
+test('mergeJournalSnapshot: carried Crossref evidence must lie in the fresh run\'s window', () => {
+  const item = until => ({ id: 'corrections_retractions_policy', weight: 3, status: 'met', source: 'crossref', crossref_until: until })
+  const fresh = { crossref_evidence: { failed: true, articles: 0, since: '2023-10-07', until: '2026-10-07' },
+    evidence_items: [{ id: 'corrections_retractions_policy', weight: 3, status: 'blocked' }] }
+  assert.equal(mergeJournalSnapshot(fresh, { evidence_items: [item('2026-11-07')] }), fresh, 'evidence from after the rating date is not carried')
+  assert.equal(mergeJournalSnapshot(fresh, { evidence_items: [item('2023-01-01')] }), fresh, 'evidence aged out of the window is not carried')
+  assert.equal(mergeJournalSnapshot(fresh, { evidence_items: [{ ...item(null) }] }), fresh, 'evidence without a sample date is not carried')
+  assert.equal(mergeJournalSnapshot(fresh, { evidence_items: [item('2026-09-07')] }).evidence_items[0].status, 'met')
+})
+
+test('shouldReplace: a stored snapshot that reached only Crossref does not block a partial site crawl', () => {
+  const stored = { evidence_snapshot_status: 'complete', fetched_pages: [{ url: 'https://x/', fetch_status: 'forbidden', http_status: 403 }], crossref_evidence: { failed: false, articles: 100 } }
+  const fresh = { evidence_snapshot_status: 'partial_source_unavailable', fetched_pages: [{ url: 'https://x/', fetch_status: 'ok', http_status: 200 }, { url: 'https://x/a', fetch_status: 'timeout', http_status: null }] }
+  assert.equal(shouldReplace('journals', fresh, stored), true)
 })

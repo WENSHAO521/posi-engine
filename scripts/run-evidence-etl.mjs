@@ -111,7 +111,7 @@ async function resolveGaps(items, journal, { publisherRegistry, crossref, rating
   if (!crossref) return { items: out, crossref: null }
   const sample = await fetchCrossrefPolicySample(journal, { now: ratingDate })
   const shares = journalItemShares(sample.works)
-  const applied = applyCrossrefSignals(out, shares, { sourceUrl: sample.sourceUrl, retrievedAt: new Date().toISOString() })
+  const applied = applyCrossrefSignals(out, shares, { sourceUrl: sample.sourceUrl, retrievedAt: new Date().toISOString(), sampleUntil: sample.until })
   return {
     items: applied.items,
     crossref: { articles: sample.works.length, since: sample.since, until: sample.until, failed: sample.failed, attempts: sample.attempts, item_shares: shares, upgraded: applied.upgraded },

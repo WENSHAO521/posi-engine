@@ -98,17 +98,19 @@ export function journalItemShares(works) {
  * (`source: 'crossref'`, the share of articles, the query and its date).
  * @param {{ id: string, weight: number, status: string }[]} items - site evidence items
  * @param {ReturnType<typeof journalItemShares>} itemShares
- * @param {{ sourceUrl?: string|null, retrievedAt?: string|null }} [provenance]
+ * @param {{ sourceUrl?: string|null, retrievedAt?: string|null, sampleUntil?: string|null }} [provenance] - sampleUntil: the
+ *   last publication date of the sample (YYYY-MM-DD), kept on the item so a
+ *   later run can tell whether carried evidence still lies in its window
  * @returns {{ items: object[], upgraded: string[] }}
  */
-export function applyCrossrefSignals(items, itemShares, { sourceUrl = null, retrievedAt = null } = {}) {
+export function applyCrossrefSignals(items, itemShares, { sourceUrl = null, retrievedAt = null, sampleUntil = null } = {}) {
   const upgraded = []
   if ((itemShares?.articles ?? 0) < MIN_ARTICLES) return { items, upgraded }
   const out = items.map(i => {
     if (!CROSSREF_EVIDENCE_MAPPING[i.id] || !['unknown', 'blocked'].includes(i.status)) return i
     if ((itemShares[i.id] ?? 0) < MIN_SHARE) return i
     upgraded.push(i.id)
-    return { ...i, status: 'met', source: 'crossref', source_url: sourceUrl, retrieved_at: retrievedAt, crossref_share: itemShares[i.id], crossref_articles: itemShares.articles }
+    return { ...i, status: 'met', source: 'crossref', source_url: sourceUrl, retrieved_at: retrievedAt, crossref_share: itemShares[i.id], crossref_articles: itemShares.articles, crossref_until: sampleUntil }
   })
   return { items: out, upgraded }
 }
