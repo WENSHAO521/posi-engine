@@ -11,6 +11,9 @@
  *     alternate_titles instead
  *   - otherwise it is keyed `ISSNL-<issn-l>` (OpenAlex ISSN-L, else the
  *     first Crossref ISSN); POSI-J ids are never minted here
+ *   - publisher: OpenAlex's host organisation, else the publisher Crossref
+ *     records for the journal (the member that registers its DOIs); which
+ *     one was used is kept in publisher_source
  *   - an ISSN is required for indexing (as in the major citation databases):
  *     OpenAlex "journals" without one are mostly conference and meeting
  *     collections, and Crossref entries without one have no identifier to
@@ -115,6 +118,9 @@ export function buildGlobalCorpus(openalex, crossref, curated = []) {
     if (hit) {
       hit.sources = [...new Set([...hit.sources, 'crossref'])]
       hit.crossref_total_dois = cr.crossref_total_dois
+      // OpenAlex has no host organisation for many journals; Crossref's
+      // publisher for the same ISSN fills the gap.
+      if (!hit.publisher?.trim() && cr.publisher?.trim()) { hit.publisher = cr.publisher.trim(); hit.publisher_source = 'crossref' }
       for (const i of cr.issns) if (!hit.issns.includes(i)) hit.issns.push(i)
       attach(hit)
       continue
@@ -146,7 +152,8 @@ export function buildGlobalCorpus(openalex, crossref, curated = []) {
       title,
       ...(alternateTitles.length ? { alternate_titles: alternateTitles } : {}),
       ...(registryTitle ? { registry_title: registryTitle } : {}),
-      publisher: r.publisher,
+      publisher: r.publisher?.trim() || null,
+      publisher_source: !r.publisher?.trim() ? null : r.publisher_source ?? (r.sources[0] === 'crossref' ? 'crossref' : 'openalex'),
       // The ETL queries issn_online first: put the ISSN-L there, since a
       // journal's secondary ISSNs often have few or no DOIs registered.
       issn_online: ordered[0] ?? null,
