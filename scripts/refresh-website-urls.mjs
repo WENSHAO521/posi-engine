@@ -45,7 +45,8 @@ function arg(name, fallback = null) {
 // keeps big pages cheap.
 async function check(url, title = null) {
   if (!url) return null
-  const once = () => fetchWithStatus(url, { timeoutMs: 20000, maxBodyBytes: 1024 * 1024 })
+  // Reading the title needs the page; liveness alone does not.
+  const once = () => fetchWithStatus(url, { timeoutMs: 20000, maxBodyBytes: title ? 4 * 1024 * 1024 : 256 * 1024 })
   let r = await once()
   if (['timeout', 'network_error'].includes(r.fetch_status)) r = await once()
   return { fetch_status: r.fetch_status, http_status: r.http_status, ...(title ? { mentions_title: !!r.body && pageMentionsTitle(r.body, title) } : {}) }
@@ -106,10 +107,12 @@ async function main() {
     ? corpus.filter(j => ['early_stage', 'mature'].includes(classifyLifecycle(j.early_stage_rating?.first_published ?? null, today).lifecycle_stage))
     : corpus
   if (arg('limit')) targets = targets.slice(0, Number(arg('limit')))
+  const concurrency = Number(arg('concurrency', '8'))
+  if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error(`--concurrency must be a positive integer, got ${arg('concurrency')}`)
   console.log(`Checking ${targets.length} of ${corpus.length} journals`)
 
   // Pass 1: the recorded address, and OpenAlex where it is dead or missing.
-  const first = await pool(targets, Number(arg('concurrency', '8')), async j => {
+  const first = await pool(targets, concurrency, async j => {
     const current = j.website_url || null
     const currentCheck = await check(current)
     const candidates = []
@@ -134,7 +137,7 @@ async function main() {
   const stuck = first.filter(r => ['dead_no_replacement', 'missing_no_replacement'].includes(decideWebsiteUrl(r).action))
   const wd = stuck.length ? await wikidataSites([...new Set(stuck.flatMap(r => issnsOf(r.j)))]) : new Map()
   console.log(`Second pass: ${stuck.length} journals; Wikidata has a website for ${stuck.filter(r => issnsOf(r.j).some(i => wd.has(i))).length}`)
-  await pool(stuck, Number(arg('concurrency', '8')), async r => {
+  await pool(stuck, concurrency, async r => {
     const seen = new Set(r.candidates.map(c => c.url))
     const more = [
       ...(curated.has(r.j.posi_id) ? [{ url: curated.get(r.j.posi_id), source: 'curated' }] : []),

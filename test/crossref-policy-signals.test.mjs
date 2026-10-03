@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { articleSignals, journalSignalShares, applyCrossrefSignals, MIN_ARTICLES } from '../src/crossref-policy-signals.mjs'
+import { articleSignals, journalSignalShares, journalItemShares, applyCrossrefSignals, MIN_ARTICLES } from '../src/crossref-policy-signals.mjs'
 
 const full = {
   license: [{ URL: 'http://creativecommons.org/licenses/by/4.0/' }],
@@ -36,7 +36,7 @@ test('applyCrossrefSignals: upgrades only unresolved mapped items, never a site 
     { id: 'conflict_of_interest_policy', weight: 2, status: 'unknown' },
     { id: 'editorial_board_public', weight: 3, status: 'blocked' },
   ]
-  const shares = { articles: MIN_ARTICLES, license: 1, crossmark: 0.9, review_dates: 0, open_review: 0, coi: 0.2, data: 0, funder: 0 }
+  const shares = { articles: MIN_ARTICLES, copyright_licensing: 1, corrections_retractions_policy: 0.9, conflict_of_interest_policy: 0.2 }
   const { items: out, upgraded } = applyCrossrefSignals(items, shares)
   assert.deepEqual(upgraded, ['corrections_retractions_policy'])
   assert.deepEqual(out.map(i => i.status), ['met', 'not_met', 'unknown', 'blocked'])
@@ -44,5 +44,14 @@ test('applyCrossrefSignals: upgrades only unresolved mapped items, never a site 
 
 test('applyCrossrefSignals: too few articles changes nothing', () => {
   const items = [{ id: 'corrections_retractions_policy', weight: 3, status: 'blocked' }]
-  assert.deepEqual(applyCrossrefSignals(items, { articles: MIN_ARTICLES - 1, crossmark: 1 }).upgraded, [])
+  assert.deepEqual(applyCrossrefSignals(items, { articles: MIN_ARTICLES - 1, corrections_retractions_policy: 1 }).upgraded, [])
+})
+
+test('journalItemShares: alternative signals are OR-ed per article', () => {
+  const dates = { assertion: [{ name: 'received' }, { name: 'accepted' }] }
+  const review = { relation: { 'has-review': [{ id: 'x' }] } }
+  const works = [dates, dates, review, review, {}]
+  assert.equal(journalSignalShares(works).review_dates, 0.4)
+  assert.equal(journalSignalShares(works).open_review, 0.4)
+  assert.equal(journalItemShares(works).peer_review_process_disclosed, 0.8)
 })

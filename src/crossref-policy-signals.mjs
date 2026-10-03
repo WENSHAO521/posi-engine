@@ -72,20 +72,35 @@ export const MIN_SHARE = 0.5
 export const MIN_ARTICLES = 20
 
 /**
+ * Per evidence item of CANDIDATE_MAPPING: the share of articles carrying
+ * at least one of its signals (the OR is taken per article, so two
+ * signals on disjoint sets of articles add up).
+ * @param {object[]} works
+ * @returns {{ articles: number } & Record<string, number>} shares 0..1
+ */
+export function journalItemShares(works) {
+  const out = { articles: works.length }
+  const signals = works.map(articleSignals)
+  for (const [id, keys] of Object.entries(CANDIDATE_MAPPING)) {
+    out[id] = works.length ? Math.round((signals.filter(s => keys.some(k => s[k])).length / works.length) * 1000) / 1000 : 0
+  }
+  return out
+}
+
+/**
  * Upgrades only items the crawl could not resolve (unknown / blocked) to
  * met where the journal's Crossref signal supports it; never overrides a
  * met or not_met the site gave.
  * @param {{ id: string, weight: number, status: string }[]} items - site evidence items
- * @param {ReturnType<typeof journalSignalShares>} shares
+ * @param {ReturnType<typeof journalItemShares>} itemShares
  * @returns {{ items: object[], upgraded: string[] }}
  */
-export function applyCrossrefSignals(items, shares) {
+export function applyCrossrefSignals(items, itemShares) {
   const upgraded = []
-  if ((shares?.articles ?? 0) < MIN_ARTICLES) return { items, upgraded }
+  if ((itemShares?.articles ?? 0) < MIN_ARTICLES) return { items, upgraded }
   const out = items.map(i => {
-    const signals = CANDIDATE_MAPPING[i.id]
-    if (!signals || !['unknown', 'blocked'].includes(i.status)) return i
-    if (!signals.some(k => (shares[k] ?? 0) >= MIN_SHARE)) return i
+    if (!CANDIDATE_MAPPING[i.id] || !['unknown', 'blocked'].includes(i.status)) return i
+    if ((itemShares[i.id] ?? 0) < MIN_SHARE) return i
     upgraded.push(i.id)
     return { ...i, status: 'met', source: 'crossref_trial' }
   })

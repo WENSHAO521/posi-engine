@@ -37,6 +37,7 @@ jobs:
 
       - name: Check the registry
         run: |
+          set -o pipefail
           node scripts/check-publisher-registry.mjs --registry posi-data/evidence/publishers \
             --out work/publisher-registry-check.json | tee -a "$GITHUB_STEP_SUMMARY"
 

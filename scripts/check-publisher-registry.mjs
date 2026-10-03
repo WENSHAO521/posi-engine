@@ -2,9 +2,9 @@
 /**
  * check-publisher-registry.mjs — for every entry in posi-data's
  * evidence/publishers/*.json: does its evidence_url still answer
- * (src/website-url.mjs liveness), and is the entry verified (a non-empty
- * verified_by and a date) or still a draft that the ETL ignores? Prints a
- * Markdown table per publisher and writes the same as JSON.
+ * (src/website-url.mjs liveness), and what the ETL does with the entry
+ * (registryEntryStatus: active, pending the next methodology version,
+ * draft, or invalid)? Prints a Markdown table and writes the same as JSON.
  *
  * Usage:
  *   node scripts/check-publisher-registry.mjs --registry <posi-data>/evidence/publishers --out report.json
@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync, readdirSync, mkdirSync } from 'fs'
 import { join, resolve, dirname } from 'path'
 import { fetchWithStatus } from '../src/evidence-fetch.mjs'
 import { liveness } from '../src/website-url.mjs'
+import { registryEntryStatus } from '../src/evidence-publisher-registry.mjs'
 
 function arg(name) {
   const i = process.argv.indexOf(`--${name}`)
@@ -30,7 +31,7 @@ async function main() {
   const rows = []
   for (const e of entries) {
     if (!e.evidence_url) {
-      rows.push({ file: e.file, publisher: e.publisher, policy_type: e.policy_type, evidence_url: null, url_status: null, url_alive: 'no_candidate', verified: false })
+      rows.push({ file: e.file, publisher: e.publisher, policy_type: e.policy_type, evidence_url: null, url_status: null, url_alive: 'no_candidate', etl_status: registryEntryStatus(e) })
       continue
     }
     if (!checked.has(e.evidence_url)) {
@@ -38,8 +39,7 @@ async function main() {
       checked.set(e.evidence_url, { status: r.http_status ?? r.fetch_status, alive: liveness(r) })
     }
     const c = checked.get(e.evidence_url)
-    const verified = typeof e.verified_by === 'string' && e.verified_by.trim() !== '' && !Number.isNaN(Date.parse(e.verified_at))
-    rows.push({ file: e.file, publisher: e.publisher, policy_type: e.policy_type, evidence_url: e.evidence_url, url_status: c.status, url_alive: c.alive, verified })
+    rows.push({ file: e.file, publisher: e.publisher, policy_type: e.policy_type, evidence_url: e.evidence_url, url_status: c.status, url_alive: c.alive, etl_status: registryEntryStatus(e) })
   }
   const out = resolve(arg('out'))
   mkdirSync(dirname(out), { recursive: true })
@@ -47,9 +47,10 @@ async function main() {
 
   const dead = rows.filter(r => r.url_alive === 'dead')
   console.log(`## Publisher registry: ${rows.length} entries, ${new Set(rows.map(r => r.publisher)).size} publishers\n`)
-  console.log(`Verified: ${rows.filter(r => r.verified).length}. Drafts (ignored by the ETL until verified): ${rows.filter(r => !r.verified).length}. Evidence URLs not answering: ${dead.length}. Without a candidate URL yet: ${rows.filter(r => r.url_alive === 'no_candidate').length}.\n`)
-  console.log('| Publisher | Policy | URL | Answers | Verified |\n|---|---|---|---|---|')
-  for (const r of rows) console.log(`| ${r.publisher} | ${r.policy_type} | ${r.evidence_url ?? '–'} | ${r.url_alive === 'no_candidate' ? 'no candidate yet' : r.url_alive === 'alive' ? 'yes' : r.url_alive === 'dead' ? `**no** (${r.url_status})` : `? (${r.url_status})`} | ${r.verified ? 'yes' : 'draft'} |`)
+  const n = s => rows.filter(r => r.etl_status === s).length
+  console.log(`Active (inherited now): ${n('active')}. Verified, pending the next methodology version: ${n('pending')}. Drafts (ignored until verified): ${n('draft')}. Invalid (verified but unusable): ${n('invalid')}. Evidence URLs not answering: ${dead.length}. Without a candidate URL yet: ${rows.filter(r => r.url_alive === 'no_candidate').length}.\n`)
+  console.log('| Publisher | Policy | URL | Answers | ETL status |\n|---|---|---|---|---|')
+  for (const r of rows) console.log(`| ${r.publisher} | ${r.policy_type} | ${r.evidence_url ?? '–'} | ${r.url_alive === 'no_candidate' ? 'no candidate yet' : r.url_alive === 'alive' ? 'yes' : r.url_alive === 'dead' ? `**no** (${r.url_status})` : `? (${r.url_status})`} | ${r.etl_status} |`)
 }
 
 main().catch(err => { console.error(err); process.exit(1) })
