@@ -5,7 +5,7 @@
  * that supersedes AJR-E-1.0's rubric with several bug fixes. AJR-E-1.0
  * stays published as-is (posi-data/AJR-SPEC.md / EARLY-STAGE-RATING-SPEC.md)
  * — this is a new version, not a silent edit of what 1.0 meant; every score
- * computed by this module stamps `methodology_version: 'AJR-E-1.1'` so
+ * computed by this module stamps `methodology_version` (AJR_E_METHODOLOGY_VERSION) so
  * historical 1.0 scores are never conflated with 1.1 ones.
  *
  * Bug fixes vs. AJR-E-1.0 (each called out explicitly by the framework):
@@ -47,7 +47,10 @@
 import { dimensionScore } from './evidence-coverage.mjs'
 import { scoreTransparency } from './shared-dimensions.mjs'
 
-export const AJR_E_METHODOLOGY_VERSION = 'AJR-E-1.1'
+// AJR-E-1.2: the AJR-E-1.1 formulas over EC-1.1 evidence (publisher-wide
+// policies and the journal's Crossref deposits resolve items the site
+// could not; AJR-SPEC.md § 8).
+export const AJR_E_METHODOLOGY_VERSION = 'AJR-E-1.2'
 
 export const MIN_ARTICLE_SAMPLE_SIZE = 10
 export const TARGET_ARTICLE_SAMPLE_SIZE = 30

@@ -91,7 +91,8 @@ jobs:
           node scripts/run-evidence-etl.mjs \
             --corpus posi-data/corpus/core-collection.json \
             --publisher-registry posi-data/evidence/publishers \
-            --out work/evidence
+            --out work/evidence \
+            ${DATE:+--rating-date "$DATE"}
           node scripts/apply-evidence-refresh.mjs --kind journals \
             --from work/evidence/journals --to posi-data/evidence/journals
 

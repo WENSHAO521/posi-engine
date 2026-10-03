@@ -3,8 +3,7 @@
  * check-publisher-registry.mjs — for every entry in posi-data's
  * evidence/publishers/*.json: does its evidence_url still answer
  * (src/website-url.mjs liveness), and what the ETL does with the entry
- * (registryEntryStatus: active, pending the next methodology version,
- * draft, or invalid)? Prints a Markdown table and writes the same as JSON.
+ * (registryEntryStatus: active, draft, or invalid)? Prints a Markdown table and writes the same as JSON.
  *
  * Usage:
  *   node scripts/check-publisher-registry.mjs --registry <posi-data>/evidence/publishers --out report.json
@@ -48,7 +47,7 @@ async function main() {
   const dead = rows.filter(r => r.url_alive === 'dead')
   console.log(`## Publisher registry: ${rows.length} entries, ${new Set(rows.map(r => r.publisher)).size} publishers\n`)
   const n = s => rows.filter(r => r.etl_status === s).length
-  console.log(`Active (inherited now): ${n('active')}. Verified, pending the next methodology version: ${n('pending')}. Drafts (ignored until verified): ${n('draft')}. Invalid (verified but unusable): ${n('invalid')}. Evidence URLs not answering: ${dead.length}. Without a candidate URL yet: ${rows.filter(r => r.url_alive === 'no_candidate').length}.\n`)
+  console.log(`Active (inherited): ${n('active')}. Drafts (ignored until verified): ${n('draft')}. Invalid (verified but unusable): ${n('invalid')}. Evidence URLs not answering: ${dead.length}. Without a candidate URL yet: ${rows.filter(r => r.url_alive === 'no_candidate').length}.\n`)
   console.log('| Publisher | Policy | URL | Answers | ETL status |\n|---|---|---|---|---|')
   for (const r of rows) console.log(`| ${r.publisher} | ${r.policy_type} | ${r.evidence_url ?? '–'} | ${r.url_alive === 'no_candidate' ? 'no candidate yet' : r.url_alive === 'alive' ? 'yes' : r.url_alive === 'dead' ? `**no** (${r.url_status})` : `? (${r.url_status})`} | ${r.etl_status} |`)
 }

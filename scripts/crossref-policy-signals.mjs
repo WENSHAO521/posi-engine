@@ -14,8 +14,8 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join, resolve, dirname } from 'path'
-import { fetchCrossrefWorksPage } from '../src/works-fetch.mjs'
-import { journalSignalShares, journalItemShares, applyCrossrefSignals, CROSSREF_POLICY_SELECT_FIELDS, CANDIDATE_MAPPING, MIN_SHARE, MIN_ARTICLES } from '../src/crossref-policy-signals.mjs'
+import { fetchCrossrefPolicySample } from '../src/crossref-policy-fetch.mjs'
+import { journalSignalShares, journalItemShares, applyCrossrefSignals, CROSSREF_EVIDENCE_MAPPING, MIN_SHARE, MIN_ARTICLES } from '../src/crossref-policy-signals.mjs'
 import { evidenceCoverage, EC_OFFICIAL_THRESHOLD, EC_PROVISIONAL_THRESHOLD } from '../src/evidence-coverage.mjs'
 
 function arg(name, fallback = null) {
@@ -30,23 +30,12 @@ async function main() {
   const sample = load(resolve(arg('sample')))
   const evDir = resolve(arg('evidence-journals'))
   const rows = Number(arg('rows', '100'))
-  // Exactly the last three years up to today: no forthcoming records.
   const now = new Date()
-  const until = now.toISOString().slice(0, 10)
-  const since = new Date(Date.UTC(now.getUTCFullYear() - 3, now.getUTCMonth(), now.getUTCDate())).toISOString().slice(0, 10)
+  let since = null, until = null
   const out = []
   for (const j of sample) {
-    const issns = [...new Set([j.issn_online, j.issn_print].filter(Boolean).map(i => String(i).trim().toUpperCase()))]
-    let works = []
-    const attempts = []
-    for (const issn of issns) {
-      const page = await fetchCrossrefWorksPage(issn, { rows, offset: 0, sort: 'published', order: 'desc', filter: `type:journal-article,from-pub-date:${since},until-pub-date:${until}`, selectFields: CROSSREF_POLICY_SELECT_FIELDS })
-      attempts.push({ issn, status: page.status, error: page.error })
-      if (page.items.length) { works = page.items; break }
-      // Otherwise try the other ISSN: every attempt is kept, so a failure
-      // is still reported (crossref_failed) when neither yields articles.
-    }
-    const failed = !works.length && attempts.some(a => a.status !== 200 && a.status !== 404)
+    const { works, attempts, failed, ...window } = await fetchCrossrefPolicySample(j, { rows, now })
+    since = window.since; until = window.until
     const status = failed ? attempts.find(a => a.status !== 200 && a.status !== 404).status : attempts.at(-1)?.status ?? null
     const shares = journalSignalShares(works)
     const itemShares = journalItemShares(works)
@@ -70,13 +59,13 @@ async function main() {
   const md = v => String(v ?? '–').replace(/\|/g, '\\|')
   const lines = [
     `## Crossref policy signals (trial, read only): ${out.length} journals`, '',
-    `Candidate mapping (item ← signal, when ≥ ${MIN_SHARE * 100}% of ≥ ${MIN_ARTICLES} recent articles carry at least one of its signals; only unknown/blocked items are upgraded): ${Object.entries(CANDIDATE_MAPPING).map(([k, v]) => `${k} ← ${v.join(' or ')}`).join('; ')}.`, '',
+    `Mapping (AJR-E-1.2; item ← signal, when ≥ ${MIN_SHARE * 100}% of ≥ ${MIN_ARTICLES} recent articles carry at least one of its signals; only unknown/blocked items are upgraded): ${Object.entries(CROSSREF_EVIDENCE_MAPPING).map(([k, v]) => `${k} ← ${v.join(' or ')}`).join('; ')}.`, '',
     `Sample: each journal's newest Crossref articles published ${since} to ${until}, at most ${rows} per journal (shares describe that sample, not every article of the period). Any articles for ${count(out, r => r.shares.articles > 0)} of ${out.length} journals; at least ${MIN_ARTICLES} (enough to upgrade an item) for ${count(out, r => r.shares.articles >= MIN_ARTICLES)}; Crossref failed for ${count(out, r => r.crossref_failed)}.`, '',
     '| Site coverage band | Before | After |', '|---|---|---|',
     ...['official', 'provisional', 'below'].map(b => `| ${b} | ${count(withEv, r => band(r.site_coverage_before) === b)} | ${count(withEv, r => band(r.site_coverage_after) === b)} |`),
     `| mean coverage | ${mean(withEv.map(r => r.site_coverage_before))}% | ${mean(withEv.map(r => r.site_coverage_after))}% |`, '',
     '| Item | Journals upgraded |', '|---|---|',
-    ...Object.keys(CANDIDATE_MAPPING).map(k => `| ${k} | ${count(out, r => r.upgraded.includes(k))} |`), '',
+    ...Object.keys(CROSSREF_EVIDENCE_MAPPING).map(k => `| ${k} | ${count(out, r => r.upgraded.includes(k))} |`), '',
     `| Signal | Journals with ≥ ${MIN_SHARE * 100}% of articles |`, '|---|---|',
     ...signals.map(s => `| ${s} | ${count(out, r => r.shares.articles >= MIN_ARTICLES && r.shares[s] >= MIN_SHARE)} |`), '',
     '| Journal | Publisher | Host | Articles | ' + signals.join(' | ') + ' | Coverage before → after |',

@@ -49,7 +49,7 @@ jobs:
       - name: Site crawl
         run: |
           node scripts/run-evidence-etl.mjs --corpus work/sample.json \
-            --publisher-registry posi-data/evidence/publishers --out work/evidence
+            --publisher-registry posi-data/evidence/publishers --out work/evidence --no-crossref
 
       # Trial only: what Crossref's own deposits (license, Crossmark, review
       # dates, COI / data statements) would add where the crawl was refused.

@@ -16,14 +16,19 @@
  */
 
 /** Only these criterion ids may be filled from a publisher-level entry
- * under the methodology versions in force (AJR-E-1.1, AJR-M-1.1, EC-1.0;
- * AJR-SPEC.md § 8 "inheritable" list) -- inherently journal-specific items
- * (aims & scope, editorial board, editor identity, peer-review process,
- * reviewer guidelines, author guidelines, publication frequency, a
- * journal's access model or APC amount) can never be satisfied this way,
- * no matter what a publisher registry entry claims. Ids match
- * `evidence-resolver.mjs`'s EVIDENCE_CRITERIA (which in turn match AJR-E's
- * canonical evidence item ids) verbatim. */
+ * (AJR-SPEC.md § 8 "inheritable" list, EC-1.1): the integrity policies
+ * (research integrity, corrections/retractions, authorship, COI, AI use,
+ * data) inheritable since EC-1.0, and from EC-1.1 (AJR-E-1.2 / AJR-M-1.2)
+ * the policies large publishers set for every journal at once (similarity
+ * checking, human/animal ethics, complaints and appeals, copyright and
+ * licensing, ownership and contact, advertising).
+ * Inherently journal-specific items (aims & scope, editorial board, editor
+ * identity, peer-review process, reviewer guidelines, author guidelines,
+ * publication frequency, a journal's access model, and fee disclosure: what
+ * a journal charges differs between journals of one publisher) and
+ * other_applicable_terms (not applicable to any journal) can never be
+ * satisfied this way, no matter what a registry entry claims. Ids match
+ * `evidence-resolver.mjs`'s EVIDENCE_CRITERIA verbatim. */
 export const INHERITABLE_CRITERION_IDS = Object.freeze([
   'publication_ethics_policy',
   'corrections_retractions_policy',
@@ -31,20 +36,9 @@ export const INHERITABLE_CRITERION_IDS = Object.freeze([
   'conflict_of_interest_policy',
   'ai_use_policy',
   'data_availability_sharing',
-])
-
-/** Policies large publishers set for every journal at once, which the
- * registry may hold (AJR-SPEC.md § 8) but which are inherited only from
- * the next methodology version: inheriting them changes scores and
- * Evidence Coverage, so they must not take effect under the versions in
- * force. applyPublisherInheritance() uses them only with
- * { includePending: true }, to be switched on together with that version
- * bump. */
-export const PENDING_INHERITABLE_CRITERION_IDS = Object.freeze([
   'plagiarism_similarity_policy',
   'human_animal_ethics_consent',
   'complaints_appeals',
-  'fee_disclosure',
   'copyright_licensing',
   'publisher_ownership_contact',
   'advertising_sponsorship_disclosure',
@@ -54,7 +48,7 @@ export const PENDING_INHERITABLE_CRITERION_IDS = Object.freeze([
  * @typedef {{
  *   publisher: string,
  *   publisher_aliases?: string[], // other names the corpus records for the same publisher (imprints, legal names)
- *   policy_type: string,        // one of INHERITABLE_CRITERION_IDS or PENDING_INHERITABLE_CRITERION_IDS
+ *   policy_type: string,        // must be one of INHERITABLE_CRITERION_IDS
  *   scope: 'all_journals',
  *   evidence_url: string,       // must be a real, parseable http(s) URL
  *   verified_by: string,        // who confirmed the stated scope -- must be non-empty
@@ -92,22 +86,18 @@ export function isWellFormedEntry(entry) {
 /**
  * What the ETL does with a registry entry, for reports
  * (scripts/check-publisher-registry.mjs):
- *   active   - verified, well-formed, inheritable now
- *   pending  - verified and well-formed, but its policy is inherited only
- *              from the next methodology version
+ *   active   - verified, well-formed, inheritable
  *   draft    - not (yet) verified: no verified_by / verified_at, or no URL
  *   invalid  - verified but unusable: no publisher name, an unsupported
  *              policy_type or scope, or a malformed evidence_url / verified_at
  * @param {object} entry
- * @returns {'active'|'pending'|'draft'|'invalid'}
+ * @returns {'active'|'draft'|'invalid'}
  */
 export function registryEntryStatus(entry) {
   const verified = typeof entry?.verified_by === 'string' && entry.verified_by.trim() !== ''
   if (!verified) return 'draft'
   if (entry.scope !== 'all_journals' || !isWellFormedEntry(entry)) return 'invalid'
-  if (INHERITABLE_CRITERION_IDS.includes(entry.policy_type)) return 'active'
-  if (PENDING_INHERITABLE_CRITERION_IDS.includes(entry.policy_type)) return 'pending'
-  return 'invalid'
+  return INHERITABLE_CRITERION_IDS.includes(entry.policy_type) ? 'active' : 'invalid'
 }
 
 /**
@@ -121,17 +111,14 @@ export function registryEntryStatus(entry) {
  *   be silently overwritten) filled from a matching, verified,
  *   inheritable, well-formed publisher entry. Everything else passes
  *   through unchanged.
- * @param {{ includePending?: boolean }} [opts] - includePending also lets
- *   PENDING_INHERITABLE_CRITERION_IDS inherit (next methodology version only)
  */
-export function applyPublisherInheritance(journalItems, publisherName, registry, { includePending = false } = {}) {
+export function applyPublisherInheritance(journalItems, publisherName, registry) {
   if (!publisherName || !registry?.length) return journalItems
-  const inheritable = includePending ? [...INHERITABLE_CRITERION_IDS, ...PENDING_INHERITABLE_CRITERION_IDS] : INHERITABLE_CRITERION_IDS
 
   const applicableEntries = registry.filter(
     e => (e.publisher === publisherName || (Array.isArray(e.publisher_aliases) && e.publisher_aliases.includes(publisherName)))
       && e.scope === 'all_journals'
-      && inheritable.includes(e.policy_type)
+      && INHERITABLE_CRITERION_IDS.includes(e.policy_type)
       && isWellFormedEntry(e)
   )
   if (applicableEntries.length === 0) return journalItems

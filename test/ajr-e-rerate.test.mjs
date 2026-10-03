@@ -149,7 +149,7 @@ test('rateJournal: Early-Stage, rich real-shaped evidence on both sources -> off
   const result = rateJournal({ journal, journalEvidence: fakeJournalEvidence(), worksEvidence: fakeWorksEvidence(), ratingDate: RATING_DATE })
   assert.equal(result.lifecycle_stage, 'early_stage')
   assert.equal(result.rating_status, 'official')
-  assert.equal(result.version, 'AJR-E-1.1')
+  assert.equal(result.version, 'AJR-E-1.2')
   assert.ok(typeof result.total === 'number' && result.total > 0)
   assert.ok(result.subfactors)
   assert.equal(Object.keys(result.subfactors).sort().join(','), ['egf', 'inf', 'pub', 'rdc', 'rif', 'soc', 'trn'].sort().join(','))

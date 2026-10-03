@@ -37,6 +37,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 
 import { resolve, join } from 'path'
 import { rateJournal } from '../src/ajr-e-rerate.mjs'
 import { getAJRRating, AJR_RATING_VERSION } from '../src/evaluation.mjs'
+import { AJR_E_METHODOLOGY_VERSION } from '../src/ajr-early-stage.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -86,7 +87,7 @@ function main() {
         rating_status: 'not_rateable', not_rateable_reason: `unexpected error during rerate, isolated: ${err?.message ?? err}`,
         subfactors: null, total: null, evidence_coverage: null, sample_adequacy: null,
         quartile: null, quartile_label: null, cohort_key: null, cohort_level: null, cohort_size: null, ranking_method: null,
-        rated_at: ratingDate.toISOString().slice(0, 10), version: 'AJR-E-1.1',
+        rated_at: ratingDate.toISOString().slice(0, 10), version: AJR_E_METHODOLOGY_VERSION,
       }
     }
 
