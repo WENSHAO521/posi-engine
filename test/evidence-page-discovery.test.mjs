@@ -146,3 +146,26 @@ test('discoverLinks: ignoring the journal code does not touch the host', () => {
   const html = `<a href="/page/home">Home</a>`
   assert.deepEqual(discoverLinks(html, 'https://about.example.com/', { ignoreTokens: ['about'] }), ['https://about.example.com/page/home'])
 })
+
+test('discoverLinks: only a path segment equal to the journal code is ignored, not text inside a longer segment', () => {
+  // A journal coded "data": "/page/data-sharing" must still match "data-shar".
+  const html = `<a href="/journal/data/page/data-sharing">Read more</a><a href="/journal/data/issue/view/3">Volume 3</a>`
+  assert.deepEqual(
+    discoverLinks(html, 'https://example.com/journal/data/', { ignoreTokens: ['data'] }),
+    ['https://example.com/journal/data/page/data-sharing'],
+  )
+})
+
+test('discoverLinks: a keyword hit wholly inside the journal code is ignored wherever the code sits in the path', () => {
+  // "aim" is inside "aimed", including in an article slug that embeds the code.
+  const html = `<a href="/index.php/aimed/article/view/10-71423-aimed-20250802">A paper</a><a href="/index.php/aimed/page/ai-use-policy">AI use</a>`
+  assert.deepEqual(
+    discoverLinks(html, 'https://www.ai-press.org/index.php/aimed/', { ignoreTokens: ['aimed'] }),
+    ['https://www.ai-press.org/index.php/aimed/page/ai-use-policy'],
+  )
+})
+
+test('discoverLinks: a hit that runs past the journal code still counts', () => {
+  const html = `<a href="/journal/data/page/data-sharing">Read more</a>`
+  assert.equal(discoverLinks(html, 'https://example.com/', { ignoreTokens: ['data'] }).length, 1)
+})

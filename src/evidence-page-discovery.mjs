@@ -70,7 +70,7 @@ const DISCOVERY_KEYWORDS = [
  * @param {object} [opts]
  * @param {string[]} [opts.ignoreTokens] - text that is part of every URL on
  *   this journal's site and says nothing about the target page, typically the
- *   journal code. Removed from the URL path (not the link text) before keyword matching: for the journal code
+ *   journal code. A keyword hit in the URL path that lies wholly inside an occurrence of a token is ignored (a hit that runs past it, the host and the link text still count): for the journal code
  *   "aimed", every link under /journal/aimed/ contains the keyword "aim", so
  *   without this every navigation, issue and article link would match.
  * @returns {string[]} deduplicated, same-origin, keyword-matching URLs
@@ -109,15 +109,19 @@ export function discoverLinks(html, baseUrl, { ignoreTokens = [] } = {}) {
     // an entirely different, attacker-controlled domain as same-origin.
     if (resolved.origin !== origin) continue
 
-    // Tokens are removed from the URL path only: the host stays, and so does
-    // the link text, which says what the link is even when the journal code
-    // happens to be a keyword (a journal coded "ethics" with an "Ethics" link).
-    let pathPart = `${resolved.pathname}${resolved.search}`.toLowerCase()
-    for (const token of ignoreTokens) {
-      if (token) pathPart = pathPart.split(String(token).toLowerCase()).join(' ')
-    }
-    const haystack = `${resolved.origin.toLowerCase()}${pathPart} ${linkText.toLowerCase()}`
-    if (DISCOVERY_KEYWORDS.some(kw => haystack.includes(kw))) {
+    // A keyword hit inside the URL path is ignored when it lies wholly within
+    // an occurrence of an ignore token (the journal code): "aim" inside "aimed"
+    // says nothing about the target page. A hit that runs past the token still
+    // counts ("data-shar" for a journal coded "data"), as do hits in the host
+    // and in the link text, which says what the link is even when the journal
+    // code happens to be a keyword.
+    const pathPart = `${resolved.pathname}${resolved.search}`.toLowerCase()
+    const hostPart = resolved.origin.toLowerCase()
+    const textPart = linkText.toLowerCase()
+    const tokenSpans = ignoreSpans(pathPart, ignoreTokens)
+    const hit = DISCOVERY_KEYWORDS.some(kw =>
+      hostPart.includes(kw) || textPart.includes(kw) || hasKeywordOutsideSpans(pathPart, kw, tokenSpans))
+    if (hit) {
       found.add(resolved.toString().replace(/\/$/, ''))
     }
   }
@@ -165,4 +169,24 @@ export function discoveryBaseUrl(page) {
   } catch {
     return page.url
   }
+}
+
+/** [start, end) of every occurrence of every token in `text` (lower-case). */
+function ignoreSpans(text, tokens) {
+  const spans = []
+  for (const raw of tokens) {
+    const token = raw ? String(raw).toLowerCase() : ''
+    if (!token) continue
+    for (let i = text.indexOf(token); i !== -1; i = text.indexOf(token, i + 1)) spans.push([i, i + token.length])
+  }
+  return spans
+}
+
+/** Whether `keyword` occurs in `text` at a place not wholly inside an ignored span. */
+function hasKeywordOutsideSpans(text, keyword, spans) {
+  for (let i = text.indexOf(keyword); i !== -1; i = text.indexOf(keyword, i + 1)) {
+    const end = i + keyword.length
+    if (!spans.some(([s, e]) => i >= s && end <= e)) return true
+  }
+  return false
 }

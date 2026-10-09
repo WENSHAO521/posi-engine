@@ -205,6 +205,7 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
     for (const link of discoverLinks(page.body, discoveryBaseUrl(page), { ignoreTokens })) discoveredLinks.add(link)
   }
   const alreadyFetched = new Set(fetchedPages.map(p => p.url))
+  const fixedPageCount = fetchedPages.length
 
   // Fetches up to `budget` not-yet-fetched links, with the same robots.txt
   // check as the fixed candidate paths.
@@ -230,8 +231,11 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
   // homepage itself does not link to. Links are taken from every page read so
   // far, including a hub that is also a fixed candidate path (already fetched,
   // so not among the newly discovered pages), with their own budget.
+  // Pages found by discovery are scanned before the fixed candidate pages, so a
+  // seed page with many links cannot use up the budget ahead of the hubs.
   const secondLevel = new Set()
-  for (const page of fetchedPages.filter(p => p.fetch_status === 'ok' && p.body)) {
+  const scanOrder = [...fetchedPages.slice(fixedPageCount), ...fetchedPages.slice(0, fixedPageCount)]
+  for (const page of scanOrder.filter(p => p.fetch_status === 'ok' && p.body)) {
     for (const link of discoverLinks(page.body, discoveryBaseUrl(page), { ignoreTokens })) secondLevel.add(link)
   }
   if (secondLevel.size > 0) await fetchDiscovered(secondLevel, MAX_SECOND_LEVEL_PAGES)
