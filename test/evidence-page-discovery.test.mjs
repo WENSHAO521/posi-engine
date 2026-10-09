@@ -88,3 +88,47 @@ test('selectNewLinks: the budget is not reduced by the fixed candidate paths alr
   const discovered = Array.from({ length: 30 }, (_, i) => `https://example.com/journal/x/page/policy-${i}`)
   assert.equal(selectNewLinks(discovered, fetched, 30).length, 30)
 })
+
+import { discoveryBaseUrl } from '../src/evidence-page-discovery.mjs'
+
+test('discoverLinks: the journal code in every URL does not count as a keyword hit', () => {
+  // "aimed" contains the discovery keyword "aim"; without ignoreTokens every link under it matches.
+  const html = `
+    <a href="/journal/aimed/issue/view/3">Volume 2</a>
+    <a href="/journal/aimed/article/view/12">A paper</a>
+    <a href="/journal/aimed/page/ai-use-policy">AI Use</a>
+    <a href="/journal/aimed/page/human-and-animal-ethics">Ethics</a>
+  `
+  const base = 'https://www.ai-press.org/journal/aimed/page/policies'
+  const without = discoverLinks(html, base)
+  assert.equal(without.length, 4, 'documents the problem: every link matches through "aim"')
+  const withTokens = discoverLinks(html, base, { ignoreTokens: ['aimed'] })
+  assert.deepEqual(withTokens.sort(), [
+    'https://www.ai-press.org/journal/aimed/page/ai-use-policy',
+    'https://www.ai-press.org/journal/aimed/page/human-and-animal-ethics',
+  ])
+})
+
+test('discoverLinks: a keyword in the link text still matches when the URL says nothing', () => {
+  const html = `<a href="/node/123">Publication Ethics</a><a href="/node/124">Our team</a>`
+  assert.deepEqual(discoverLinks(html, 'https://example.com/journal/x/', { ignoreTokens: ['x'] }), ['https://example.com/node/123'])
+})
+
+test('discoverLinks finds contact pages', () => {
+  assert.deepEqual(discoverLinks('<a href="/page/contact-us">Contact</a>', 'https://example.com/'), ['https://example.com/page/contact-us'])
+})
+
+test('discoveryBaseUrl uses the post-redirect URL so relative links resolve under it', () => {
+  const page = { url: 'https://example.com/policies', final_url: 'https://example.com/policies/' }
+  assert.equal(discoveryBaseUrl(page), 'https://example.com/policies/')
+  assert.deepEqual(discoverLinks('<a href="ai-policy">AI</a>', discoveryBaseUrl(page)), ['https://example.com/policies/ai-policy'])
+  // without it, the same link resolves to the wrong place
+  assert.deepEqual(discoverLinks('<a href="ai-policy">AI</a>', page.url), ['https://example.com/ai-policy'])
+})
+
+test('discoveryBaseUrl keeps the requested URL when there is no redirect, or when it leaves the origin', () => {
+  assert.equal(discoveryBaseUrl({ url: 'https://example.com/a' }), 'https://example.com/a')
+  assert.equal(discoveryBaseUrl({ url: 'https://example.com/a', final_url: 'https://example.com/a' }), 'https://example.com/a')
+  assert.equal(discoveryBaseUrl({ url: 'https://example.com/a', final_url: 'https://other.test/a' }), 'https://example.com/a')
+  assert.equal(discoveryBaseUrl({ url: 'https://example.com/a', final_url: 'not a url' }), 'https://example.com/a')
+})

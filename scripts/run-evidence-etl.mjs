@@ -47,7 +47,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs'
 import { resolve, join } from 'path'
 import { fetchWithStatus, isPathDisallowedByRobots, evidenceSnapshotStatus } from '../src/evidence-fetch.mjs'
-import { candidateUrls, discoverLinks, selectNewLinks } from '../src/evidence-page-discovery.mjs'
+import { candidateUrls, discoverLinks, discoveryBaseUrl, selectNewLinks } from '../src/evidence-page-discovery.mjs'
 import { resolveAllCriteria, EVIDENCE_CRITERIA } from '../src/evidence-resolver.mjs'
 import { applyPublisherInheritance } from '../src/evidence-publisher-registry.mjs'
 import { journalItemShares, applyCrossrefSignals } from '../src/crossref-policy-signals.mjs'
@@ -193,6 +193,8 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
   // CANDIDATE_PATHS, letting link-discovered URLs silently bypass the
   // robots rules already established for this site (review-caught bug).
   const seedPages = fetchedPages.filter(p => p.fetch_status === 'ok' && p.body)
+  // The journal code is in every URL of its own site and must not count as a keyword hit.
+  const ignoreTokens = [journal.journal_code]
   const discoveredLinks = new Set()
   for (const page of seedPages.slice(0, 3)) {
     // Resolve relative hrefs against the page THEY WERE FOUND ON
@@ -200,7 +202,7 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
     // href="ethics" found on /about must resolve to /about/ethics, not to
     // a root-relative /ethics, which is what passing websiteUrl here
     // produced.
-    for (const link of discoverLinks(page.body, page.url)) discoveredLinks.add(link)
+    for (const link of discoverLinks(page.body, discoveryBaseUrl(page), { ignoreTokens })) discoveredLinks.add(link)
   }
   const alreadyFetched = new Set(fetchedPages.map(p => p.url))
 
@@ -229,7 +231,7 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
   // above, with their own budget.
   const secondLevel = new Set()
   for (const page of discoveredResults.filter(p => p.fetch_status === 'ok' && p.body)) {
-    for (const link of discoverLinks(page.body, page.url)) secondLevel.add(link)
+    for (const link of discoverLinks(page.body, discoveryBaseUrl(page), { ignoreTokens })) secondLevel.add(link)
   }
   if (secondLevel.size > 0) await fetchDiscovered(secondLevel, MAX_SECOND_LEVEL_PAGES)
 

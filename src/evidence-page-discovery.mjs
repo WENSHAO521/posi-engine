@@ -49,7 +49,7 @@ const DISCOVERY_KEYWORDS = [
   'ethic', 'polic', 'author-guide', 'guideline', 'submission', 'submit',
   'apc', 'fee', 'charge', 'copyright', 'licens', 'retract', 'correction',
   'errata', 'archiv', 'preserv', 'data-availab', 'data-shar', 'ai-polic',
-  'artificial-intelligence',
+  'artificial-intelligence', 'contact',
 ]
 
 /**
@@ -67,9 +67,15 @@ const DISCOVERY_KEYWORDS = [
  *   hrefs correctly (an `href="ethics"` found on `/about` must resolve to
  *   `/about/ethics`, not to a root-relative `/ethics`) and for same-origin
  *   filtering.
+ * @param {object} [opts]
+ * @param {string[]} [opts.ignoreTokens] - text that is part of every URL on
+ *   this journal's site and says nothing about the target page, typically the
+ *   journal code. Removed before keyword matching: for the journal code
+ *   "aimed", every link under /journal/aimed/ contains the keyword "aim", so
+ *   without this every navigation, issue and article link would match.
  * @returns {string[]} deduplicated, same-origin, keyword-matching URLs
  */
-export function discoverLinks(html, baseUrl) {
+export function discoverLinks(html, baseUrl, { ignoreTokens = [] } = {}) {
   if (!html) return []
   let origin
   try {
@@ -103,7 +109,10 @@ export function discoverLinks(html, baseUrl) {
     // an entirely different, attacker-controlled domain as same-origin.
     if (resolved.origin !== origin) continue
 
-    const haystack = `${resolved.toString().toLowerCase()} ${linkText.toLowerCase()}`
+    let haystack = `${resolved.toString().toLowerCase()} ${linkText.toLowerCase()}`
+    for (const token of ignoreTokens) {
+      if (token) haystack = haystack.split(String(token).toLowerCase()).join(' ')
+    }
     if (DISCOVERY_KEYWORDS.some(kw => haystack.includes(kw))) {
       found.add(resolved.toString().replace(/\/$/, ''))
     }
@@ -134,4 +143,22 @@ export function candidateUrls(baseWebsiteUrl) {
  */
 export function selectNewLinks(links, alreadyFetched, budget) {
   return [...links].filter(u => !alreadyFetched.has(u)).slice(0, Math.max(0, budget))
+}
+
+/**
+ * The URL relative links in a fetched page resolve against: the URL after
+ * redirects (so `/policies` redirecting to `/policies/` resolves `href="x"`
+ * as `/policies/x`), unless the redirect left the origin of the requested
+ * URL, in which case the requested URL is kept so discovery stays on the
+ * journal's own site.
+ * @param {{ url: string, final_url?: string }} page
+ * @returns {string}
+ */
+export function discoveryBaseUrl(page) {
+  if (!page.final_url || page.final_url === page.url) return page.url
+  try {
+    return new URL(page.final_url).origin === new URL(page.url).origin ? page.final_url : page.url
+  } catch {
+    return page.url
+  }
 }
