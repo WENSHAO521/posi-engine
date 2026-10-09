@@ -135,7 +135,6 @@ function buildRecord(csvRow, openAlex, seq) {
     license: '',
     peer_review_type: '',
     website_url: csvRow.url,
-    cover_image_url: null,
     oai_base_url: null,
     registration_country: null,
     doaj_status: openAlex?.is_in_doaj === true ? 'listed' : openAlex?.is_in_doaj === false ? 'not_listed' : null,
