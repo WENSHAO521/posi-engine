@@ -132,3 +132,17 @@ test('discoveryBaseUrl keeps the requested URL when there is no redirect, or whe
   assert.equal(discoveryBaseUrl({ url: 'https://example.com/a', final_url: 'https://other.test/a' }), 'https://example.com/a')
   assert.equal(discoveryBaseUrl({ url: 'https://example.com/a', final_url: 'not a url' }), 'https://example.com/a')
 })
+
+test('discoverLinks: ignoring the journal code leaves the link text alone', () => {
+  // A journal coded "ethics": the "Ethics" anchor must still match.
+  const html = `<a href="/node/123">Ethics</a><a href="/journal/ethics/issue/view/3">Volume 3</a>`
+  assert.deepEqual(
+    discoverLinks(html, 'https://example.com/journal/ethics/', { ignoreTokens: ['ethics'] }),
+    ['https://example.com/node/123'],
+  )
+})
+
+test('discoverLinks: ignoring the journal code does not touch the host', () => {
+  const html = `<a href="/page/home">Home</a>`
+  assert.deepEqual(discoverLinks(html, 'https://about.example.com/', { ignoreTokens: ['about'] }), ['https://about.example.com/page/home'])
+})

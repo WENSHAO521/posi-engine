@@ -70,7 +70,7 @@ const DISCOVERY_KEYWORDS = [
  * @param {object} [opts]
  * @param {string[]} [opts.ignoreTokens] - text that is part of every URL on
  *   this journal's site and says nothing about the target page, typically the
- *   journal code. Removed before keyword matching: for the journal code
+ *   journal code. Removed from the URL path (not the link text) before keyword matching: for the journal code
  *   "aimed", every link under /journal/aimed/ contains the keyword "aim", so
  *   without this every navigation, issue and article link would match.
  * @returns {string[]} deduplicated, same-origin, keyword-matching URLs
@@ -109,10 +109,14 @@ export function discoverLinks(html, baseUrl, { ignoreTokens = [] } = {}) {
     // an entirely different, attacker-controlled domain as same-origin.
     if (resolved.origin !== origin) continue
 
-    let haystack = `${resolved.toString().toLowerCase()} ${linkText.toLowerCase()}`
+    // Tokens are removed from the URL path only: the host stays, and so does
+    // the link text, which says what the link is even when the journal code
+    // happens to be a keyword (a journal coded "ethics" with an "Ethics" link).
+    let pathPart = `${resolved.pathname}${resolved.search}`.toLowerCase()
     for (const token of ignoreTokens) {
-      if (token) haystack = haystack.split(String(token).toLowerCase()).join(' ')
+      if (token) pathPart = pathPart.split(String(token).toLowerCase()).join(' ')
     }
+    const haystack = `${resolved.origin.toLowerCase()}${pathPart} ${linkText.toLowerCase()}`
     if (DISCOVERY_KEYWORDS.some(kw => haystack.includes(kw))) {
       found.add(resolved.toString().replace(/\/$/, ''))
     }

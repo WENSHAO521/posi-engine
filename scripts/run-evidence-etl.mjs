@@ -223,14 +223,15 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
     return results
   }
 
-  const discoveredResults = await fetchDiscovered(discoveredLinks, MAX_DISCOVERED_PAGES)
+  await fetchDiscovered(discoveredLinks, MAX_DISCOVERED_PAGES)
 
   // One level further: a policies hub linked from the homepage lists the
   // individual policy pages (AI use, ethics, misconduct ...), which the
-  // homepage itself does not link to. Links are taken from the pages found
-  // above, with their own budget.
+  // homepage itself does not link to. Links are taken from every page read so
+  // far, including a hub that is also a fixed candidate path (already fetched,
+  // so not among the newly discovered pages), with their own budget.
   const secondLevel = new Set()
-  for (const page of discoveredResults.filter(p => p.fetch_status === 'ok' && p.body)) {
+  for (const page of fetchedPages.filter(p => p.fetch_status === 'ok' && p.body)) {
     for (const link of discoverLinks(page.body, discoveryBaseUrl(page), { ignoreTokens })) secondLevel.add(link)
   }
   if (secondLevel.size > 0) await fetchDiscovered(secondLevel, MAX_SECOND_LEVEL_PAGES)
