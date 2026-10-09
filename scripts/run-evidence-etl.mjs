@@ -47,7 +47,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs'
 import { resolve, join } from 'path'
 import { fetchWithStatus, isPathDisallowedByRobots, evidenceSnapshotStatus } from '../src/evidence-fetch.mjs'
-import { candidateUrls, discoverLinks } from '../src/evidence-page-discovery.mjs'
+import { candidateUrls, discoverLinks, selectNewLinks } from '../src/evidence-page-discovery.mjs'
 import { resolveAllCriteria, EVIDENCE_CRITERIA } from '../src/evidence-resolver.mjs'
 import { applyPublisherInheritance } from '../src/evidence-publisher-registry.mjs'
 import { journalItemShares, applyCrossrefSignals } from '../src/crossref-policy-signals.mjs'
@@ -55,7 +55,14 @@ import { fetchCrossrefPolicySample } from '../src/crossref-policy-fetch.mjs'
 import { evidenceCoverage, dimensionScore, EVIDENCE_COVERAGE_METHODOLOGY_VERSION } from '../src/evidence-coverage.mjs'
 
 const USER_AGENT = 'POSI-EvidenceETL/1.0 (+https://posi.panorama-sg.com; posi@panorama-sg.com)'
-const MAX_PAGES_PER_JOURNAL = 30
+// Budget for pages found by link discovery. It used to be 30 minus every
+// fixed candidate path already tried, and most of those are 404s on a given
+// site, so a site with ~27 guessed paths left room for 3 discovered links
+// (AI Med's Policies pages were cut off that way). Discovery now has its own
+// budget.
+const MAX_DISCOVERED_PAGES = 30
+// Further budget for links found on those discovered pages (policy hubs).
+const MAX_SECOND_LEVEL_PAGES = 20
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -172,11 +179,9 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
     else toFetch.push(url)
   }
 
-  let fetchedPages = await runBatch(
-    toFetch,
-    url => fetchWithStatus(url, { timeoutMs: 10000, userAgent: USER_AGENT }),
-    concurrency, delayMs
-  )
+  const fetchPage = url => fetchWithStatus(url, { timeoutMs: 10000, userAgent: USER_AGENT })
+
+  let fetchedPages = await runBatch(toFetch, fetchPage, concurrency, delayMs)
   for (const url of robotsBlockedUrls) {
     fetchedPages.push({ url, fetch_status: 'robots_blocked', http_status: null, body: null, retrieved_at: new Date().toISOString(), error: null })
   }
@@ -198,21 +203,35 @@ async function crawlJournal(journal, { concurrency, delayMs, publisherRegistry, 
     for (const link of discoverLinks(page.body, page.url)) discoveredLinks.add(link)
   }
   const alreadyFetched = new Set(fetchedPages.map(p => p.url))
-  const candidateNewLinks = [...discoveredLinks].filter(u => !alreadyFetched.has(u)).slice(0, Math.max(0, MAX_PAGES_PER_JOURNAL - fetchedPages.length))
-  const newLinksToFetch = []
-  for (const url of candidateNewLinks) {
-    const path = url.replace(origin, '') || '/'
-    if (isDisallowed(path)) fetchedPages.push({ url, fetch_status: 'robots_blocked', http_status: null, body: null, retrieved_at: new Date().toISOString(), error: null })
-    else newLinksToFetch.push(url)
+
+  // Fetches up to `budget` not-yet-fetched links, with the same robots.txt
+  // check as the fixed candidate paths.
+  const fetchDiscovered = async (links, budget) => {
+    const fresh = selectNewLinks(links, alreadyFetched, budget)
+    const toGet = []
+    for (const url of fresh) {
+      alreadyFetched.add(url)
+      const path = url.replace(origin, '') || '/'
+      if (isDisallowed(path)) fetchedPages.push({ url, fetch_status: 'robots_blocked', http_status: null, body: null, retrieved_at: new Date().toISOString(), error: null })
+      else toGet.push(url)
+    }
+    if (toGet.length === 0) return []
+    const results = await runBatch(toGet, fetchPage, concurrency, delayMs)
+    fetchedPages = fetchedPages.concat(results)
+    return results
   }
-  if (newLinksToFetch.length > 0) {
-    const discoveredResults = await runBatch(
-      newLinksToFetch,
-      url => fetchWithStatus(url, { timeoutMs: 10000, userAgent: USER_AGENT }),
-      concurrency, delayMs
-    )
-    fetchedPages = fetchedPages.concat(discoveredResults)
+
+  const discoveredResults = await fetchDiscovered(discoveredLinks, MAX_DISCOVERED_PAGES)
+
+  // One level further: a policies hub linked from the homepage lists the
+  // individual policy pages (AI use, ethics, misconduct ...), which the
+  // homepage itself does not link to. Links are taken from the pages found
+  // above, with their own budget.
+  const secondLevel = new Set()
+  for (const page of discoveredResults.filter(p => p.fetch_status === 'ok' && p.body)) {
+    for (const link of discoverLinks(page.body, page.url)) secondLevel.add(link)
   }
+  if (secondLevel.size > 0) await fetchDiscovered(secondLevel, MAX_SECOND_LEVEL_PAGES)
 
   const gaps = await resolveGaps(resolveAllCriteria(fetchedPages, websiteUrl), journal, { publisherRegistry, crossref, ratingDate })
   const evidenceItems = gaps.items

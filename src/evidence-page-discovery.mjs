@@ -120,3 +120,18 @@ export function candidateUrls(baseWebsiteUrl) {
   const base = baseWebsiteUrl.replace(/\/+$/, '')
   return CANDIDATE_PATHS.map(p => (p === '/' ? base : `${base}${p}`))
 }
+
+/**
+ * Picks the links to fetch next: those not fetched yet, at most `budget`.
+ * The budget is for discovered links only. Fixed candidate paths are tried
+ * first and mostly answer 404, so counting them against a shared page limit
+ * left a journal with ~27 guessed paths room for 3 discovered links, and its
+ * Policies pages were cut off.
+ * @param {Iterable<string>} links
+ * @param {Set<string>} alreadyFetched
+ * @param {number} budget
+ * @returns {string[]}
+ */
+export function selectNewLinks(links, alreadyFetched, budget) {
+  return [...links].filter(u => !alreadyFetched.has(u)).slice(0, Math.max(0, budget))
+}

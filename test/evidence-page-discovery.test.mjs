@@ -63,3 +63,28 @@ test('candidateUrls builds one absolute URL per CANDIDATE_PATHS entry, with the 
   assert.equal(urls[0], 'https://journal.example.com')
   assert.ok(urls.includes('https://journal.example.com/publication-ethics'))
 })
+
+import { selectNewLinks } from '../src/evidence-page-discovery.mjs'
+
+test('selectNewLinks skips links already fetched and keeps discovery order', () => {
+  const fetched = new Set(['https://example.com/a'])
+  assert.deepEqual(
+    selectNewLinks(['https://example.com/a', 'https://example.com/b', 'https://example.com/c'], fetched, 10),
+    ['https://example.com/b', 'https://example.com/c'],
+  )
+})
+
+test('selectNewLinks caps at the budget, and a zero or negative budget selects nothing', () => {
+  const links = ['https://example.com/a', 'https://example.com/b', 'https://example.com/c']
+  assert.equal(selectNewLinks(links, new Set(), 2).length, 2)
+  assert.deepEqual(selectNewLinks(links, new Set(), 0), [])
+  assert.deepEqual(selectNewLinks(links, new Set(), -3), [])
+})
+
+test('selectNewLinks: the budget is not reduced by the fixed candidate paths already tried', () => {
+  // Every fixed candidate path is "already fetched" (mostly 404s on a given site);
+  // all 30 discovered links must still be selectable.
+  const fetched = new Set(candidateUrls('https://example.com'))
+  const discovered = Array.from({ length: 30 }, (_, i) => `https://example.com/journal/x/page/policy-${i}`)
+  assert.equal(selectNewLinks(discovered, fetched, 30).length, 30)
+})
