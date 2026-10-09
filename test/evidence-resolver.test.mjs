@@ -217,3 +217,32 @@ test('a failed fetch of a discovered misconduct or complaints page is not read a
   const timedOut = { url: `${WEBSITE}/page/complaints-and-appeals`, fetch_status: 'timeout', http_status: null, body: null, retrieved_at: 't1' }
   assert.equal(resolveCriterion(complaints, [home, timedOut], WEBSITE).status, 'unknown')
 })
+
+test('a path that only might discuss the subject does not outrank the page named for it', () => {
+  // complaints_appeals lists "ethics" as a relevant path (a page that might discuss complaints), but
+  // /page/complaints-and-appeals is the page named for the subject, even if the ethics page mentions it more.
+  const pages = [
+    { url: WEBSITE, fetch_status: 'ok', http_status: 200, body: 'Home', retrieved_at: 't0' },
+    { url: `${WEBSITE}/page/publication-ethics`, fetch_status: 'ok', http_status: 200, body: 'complaint complaint complaint complaint', retrieved_at: 't1' },
+    { url: `${WEBSITE}/page/complaints-and-appeals`, fetch_status: 'ok', http_status: 200, body: 'one complaint here', retrieved_at: 't2' },
+  ]
+  assert.equal(resolveCriterion(complaints, pages, WEBSITE).source_url, `${WEBSITE}/page/complaints-and-appeals`)
+  // with no page named for the subject, the relevant path still beats a page with no tie to it
+  const onlyRelevant = [
+    { url: `${WEBSITE}/page/volumes`, fetch_status: 'ok', http_status: 200, body: 'complaint complaint complaint', retrieved_at: 't1' },
+    { url: `${WEBSITE}/page/publication-ethics`, fetch_status: 'ok', http_status: 200, body: 'one complaint', retrieved_at: 't2' },
+  ]
+  assert.equal(resolveCriterion(complaints, onlyRelevant, WEBSITE).source_url, `${WEBSITE}/page/publication-ethics`)
+})
+
+test('a redirect to another origin is cited at where the body came from, and a generic page there is not ranked as dedicated', () => {
+  const pages = [
+    { url: `${WEBSITE}/page/complaints-and-appeals`, final_url: 'https://publisher.example.org/', fetch_status: 'ok', http_status: 200, body: 'Publisher home. Complaints are handled by the editor.', retrieved_at: 't1' },
+    { url: `${WEBSITE}/page/volumes`, fetch_status: 'ok', http_status: 200, body: 'Volumes. complaint', retrieved_at: 't2' },
+  ]
+  const result = resolveCriterion(complaints, pages, WEBSITE)
+  assert.equal(result.status, 'met')
+  assert.equal(result.source_url, 'https://publisher.example.org/', 'cites the real origin of the body (more mentions), not the guessed path')
+  const wwwRedirect = [{ url: 'https://example.com/page/complaints-and-appeals', final_url: 'https://www.example.com/page/complaints-and-appeals', fetch_status: 'ok', http_status: 200, body: 'complaint', retrieved_at: 't1' }]
+  assert.equal(resolveCriterion(complaints, wwwRedirect, 'https://example.com').source_url, 'https://www.example.com/page/complaints-and-appeals')
+})

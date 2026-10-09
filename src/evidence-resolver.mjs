@@ -47,7 +47,6 @@
  */
 
 import { BLOCKING_STATUSES, UNKNOWN_STATUSES } from './evidence-fetch.mjs'
-import { discoveryBaseUrl } from './evidence-page-discovery.mjs'
 
 function hasAny(text, patterns) {
   if (!text) return false
@@ -202,19 +201,24 @@ function detectCriterionInPages(criterion, fetchedPages, websiteUrl = null) {
   const matching = okPages.filter(page => hasAny(page.body, criterion.patterns))
   if (matching.length === 0) return { matched: false, sourceUrl: null, page: null }
   // Whether the criterion is met does not depend on which page is cited. The
-  // cited page is the best evidence: a page dedicated to the subject (its URL
-  // names the criterion) over one that merely mentions it (a menu entry on an
-  // archive page), then the page with more mentions, then the earliest fetched.
-  // The URL used is where the body actually came from: a guessed path that
-  // redirects to the homepage must not count as a page about the subject, nor
-  // be cited as one.
+  // cited page is the best evidence: a page whose URL names the subject over
+  // one that merely mentions it (a menu entry on an archive page), then the
+  // page with more mentions, then the earliest fetched. The URL used is where
+  // the body actually came from, on any origin: a guessed path that redirects
+  // to a generic page must not count as a page about the subject, nor be
+  // cited as one.
   let best = matching[0]
   let bestScore = -1
   for (const page of matching) {
-    const score = (isDedicatedPage(discoveryBaseUrl(page), criterion, websiteUrl) ? 1000 : 0) + countPatternHits(page.body, criterion.patterns)
+    const score = pageRank(effectiveUrl(page), criterion, websiteUrl) * 1000 + countPatternHits(page.body, criterion.patterns)
     if (score > bestScore) { best = page; bestScore = score }
   }
-  return { matched: true, sourceUrl: discoveryBaseUrl(best), page: best }
+  return { matched: true, sourceUrl: effectiveUrl(best), page: best }
+}
+
+/** The URL a fetched page's body came from: after redirects, whatever the origin. */
+function effectiveUrl(page) {
+  return page.final_url || page.url
 }
 
 /** Number of pattern occurrences in `text`, case-insensitive. */
@@ -228,19 +232,23 @@ function countPatternHits(text, patterns) {
 }
 
 /**
- * Whether a page is dedicated to a criterion's subject: its URL path contains
- * one of the criterion's own path keywords, or one of its English patterns
- * written as a slug ("complaint" in /page/complaints-and-appeals,
- * "retraction" in /page/retraction-and-correction-policy). The homepage and
- * the generic "About" pages are never dedicated.
+ * How strongly a page's URL ties it to a criterion's subject, for choosing the
+ * cited page: 2 when the path names the subject itself (one of the criterion's
+ * English patterns written as a slug: `complaint` in /page/complaints-and-appeals,
+ * `retraction` in /page/retraction-and-correction-policy), 1 when it is only a
+ * path where the subject might be discussed (a relevantPathKeywords entry such
+ * as `ethics` for complaints), 0 otherwise. The homepage is always 0.
+ * relevantPathKeywords exists to classify failed fetches and is broader than
+ * "dedicated", so it ranks below the criterion's own wording.
  */
-function isDedicatedPage(url, criterion, websiteUrl) {
+function pageRank(url, criterion, websiteUrl) {
   const normalized = url.replace(/\/+$/, '').toLowerCase()
-  if (websiteUrl && normalized === websiteUrl.replace(/\/+$/, '').toLowerCase()) return false
+  if (websiteUrl && normalized === websiteUrl.replace(/\/+$/, '').toLowerCase()) return 0
   let path
-  try { path = new URL(url).pathname.toLowerCase() } catch { return false }
-  if (criterion.relevantPathKeywords.some(k => path.includes(k))) return true
-  return criterion.patterns.some(p => /^[a-z][a-z ]*$/.test(p) && path.includes(p.replace(/ /g, '-')))
+  try { path = new URL(url).pathname.toLowerCase() } catch { return 0 }
+  if (criterion.patterns.some(p => /^[a-z][a-z ]*$/.test(p) && path.includes(p.replace(/ /g, '-')))) return 2
+  if (criterion.relevantPathKeywords.some(k => path.includes(k))) return 1
+  return 0
 }
 
 /**
