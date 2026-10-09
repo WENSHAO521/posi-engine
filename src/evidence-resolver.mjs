@@ -47,6 +47,7 @@
  */
 
 import { BLOCKING_STATUSES, UNKNOWN_STATUSES } from './evidence-fetch.mjs'
+import { discoveryBaseUrl } from './evidence-page-discovery.mjs'
 
 function hasAny(text, patterns) {
   if (!text) return false
@@ -102,12 +103,12 @@ export const EVIDENCE_CRITERIA = Object.freeze([
     relevantPathKeywords: ['peer-review', 'editorial-policies', 'for-authors'] },
   { id: 'complaints_appeals', dimension: 'editorial_governance', weight: 2,
     patterns: ['complaint', 'appeal', 'grievance', 'dispute resolution', '投诉', '申诉', '异议'],
-    relevantPathKeywords: ['editorial-policies', 'publication-ethics', 'ethics'] },
+    relevantPathKeywords: ['editorial-policies', 'publication-ethics', 'ethics', 'complaint'] },
 
   // --- Dimension 2: Research Integrity (AJR-E-1.1-SPEC.md § 4, RESEARCH_INTEGRITY_ITEMS) ---
   { id: 'publication_ethics_policy', dimension: 'research_integrity', weight: 3,
     patterns: ['publication ethics', 'ethics statement', 'ethics and misconduct', 'misconduct policy', 'code of conduct', '出版伦理', '学术不端', '科研诚信'],
-    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
+    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies', 'misconduct'] },
   { id: 'corrections_retractions_policy', dimension: 'research_integrity', weight: 3,
     patterns: ['retraction', 'correction policy', 'errata', 'erratum', 'corrigendum', '勘误', '撤稿', '更正声明'],
     relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies', 'corrections', 'retractions'] },
@@ -119,12 +120,12 @@ export const EVIDENCE_CRITERIA = Object.freeze([
     relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
   { id: 'plagiarism_similarity_policy', dimension: 'research_integrity', weight: 2,
     patterns: ['plagiarism', 'similarity check', 'turnitin', 'ithenticate', 'similarity index', '抄袭', '查重', '相似度检测', '剽窃'],
-    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
+    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies', 'misconduct'] },
   { id: 'human_animal_ethics_consent', dimension: 'research_integrity', weight: 1,
     patterns: ['informed consent', 'animal welfare', 'institutional review board', 'ethics committee approval', 'human subjects', '知情同意', '伦理委员会', '动物福利'],
     relevantPathKeywords: ['publication-ethics', 'ethics'] },
   { id: 'data_availability_sharing', dimension: 'research_integrity', weight: 1,
-    patterns: ['data availability', 'data and code availability', 'code availability', 'availability statement', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'],
+    patterns: ['data availability', 'data and code availability', 'code availability', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'],
     relevantPathKeywords: ['data-policy', 'author-guidelines', 'for-authors'] },
   { id: 'ai_use_policy', dimension: 'research_integrity', weight: 1,
     patterns: ['use of ai', 'artificial intelligence policy', 'generative ai', 'chatgpt', 'large language model', 'ai-assisted', '人工智能政策', '生成式人工智能', '大语言模型'],
@@ -199,18 +200,21 @@ function isRelevantPage(url, websiteUrl, relevantPathKeywords) {
 function detectCriterionInPages(criterion, fetchedPages, websiteUrl = null) {
   const okPages = fetchedPages.filter(p => p.fetch_status === 'ok' && p.body)
   const matching = okPages.filter(page => hasAny(page.body, criterion.patterns))
-  if (matching.length === 0) return { matched: false, sourceUrl: null }
+  if (matching.length === 0) return { matched: false, sourceUrl: null, page: null }
   // Whether the criterion is met does not depend on which page is cited. The
   // cited page is the best evidence: a page dedicated to the subject (its URL
   // names the criterion) over one that merely mentions it (a menu entry on an
   // archive page), then the page with more mentions, then the earliest fetched.
+  // The URL used is where the body actually came from: a guessed path that
+  // redirects to the homepage must not count as a page about the subject, nor
+  // be cited as one.
   let best = matching[0]
   let bestScore = -1
   for (const page of matching) {
-    const score = (isDedicatedPage(page.url, criterion, websiteUrl) ? 1000 : 0) + countPatternHits(page.body, criterion.patterns)
+    const score = (isDedicatedPage(discoveryBaseUrl(page), criterion, websiteUrl) ? 1000 : 0) + countPatternHits(page.body, criterion.patterns)
     if (score > bestScore) { best = page; bestScore = score }
   }
-  return { matched: true, sourceUrl: best.url }
+  return { matched: true, sourceUrl: discoveryBaseUrl(best), page: best }
 }
 
 /** Number of pattern occurrences in `text`, case-insensitive. */
@@ -256,9 +260,9 @@ export function resolveCriterion(criterion, fetchedPages, websiteUrl = null) {
     return { id: criterion.id, weight: criterion.weight, status: 'not_applicable', source_url: null, retrieved_at: null }
   }
 
-  const { matched, sourceUrl } = detectCriterionInPages(criterion, fetchedPages, websiteUrl)
+  const { matched, sourceUrl, page } = detectCriterionInPages(criterion, fetchedPages, websiteUrl)
   if (matched) {
-    return { id: criterion.id, weight: criterion.weight, status: 'met', source_url: sourceUrl, retrieved_at: fetchedPages.find(p => p.url === sourceUrl)?.retrieved_at ?? null }
+    return { id: criterion.id, weight: criterion.weight, status: 'met', source_url: sourceUrl, retrieved_at: page.retrieved_at ?? null }
   }
 
   const relevantPages = fetchedPages.filter(p => isRelevantPage(p.url, websiteUrl, criterion.relevantPathKeywords))

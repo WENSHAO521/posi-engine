@@ -154,10 +154,12 @@ test('resolveAllCriteria returns exactly one item per EVIDENCE_CRITERIA entry, w
 const complaints = EVIDENCE_CRITERIA.find(c => c.id === 'complaints_appeals')
 const dataAvailability = EVIDENCE_CRITERIA.find(c => c.id === 'data_availability_sharing')
 
-test('data_availability_sharing: "data and code availability" and "availability statement" count', () => {
+test('data_availability_sharing: "data and code availability" and "data availability statement" count, a bare "availability statement" does not', () => {
   const page = body => [{ url: `${WEBSITE}/for-authors`, fetch_status: 'ok', http_status: 200, body, retrieved_at: '2026-10-09T00:00:00Z' }]
   assert.equal(resolveCriterion(dataAvailability, page('Every manuscript must include a Data and Code Availability section.'), WEBSITE).status, 'met')
-  assert.equal(resolveCriterion(dataAvailability, page('Include an availability statement for materials.'), WEBSITE).status, 'met')
+  assert.equal(resolveCriterion(dataAvailability, page('A Data Availability Statement is required.'), WEBSITE).status, 'met')
+  // A bare "availability statement" says nothing about data.
+  assert.equal(resolveCriterion(dataAvailability, page('Our online availability statement explains when issues become available to subscribers.'), WEBSITE).status, 'not_met')
   assert.equal(resolveCriterion(dataAvailability, page('Welcome to our journal. Article processing charges apply.'), WEBSITE).status, 'not_met')
 })
 
@@ -188,4 +190,30 @@ test('which page is cited never changes whether the criterion is met', () => {
   const result = resolveCriterion(complaints, pages, WEBSITE)
   assert.equal(result.status, 'met')
   assert.equal(result.source_url, WEBSITE, 'the homepage is never "dedicated" but is still cited when it is the only match')
+})
+
+test('a guessed path that redirects to the homepage is neither ranked as a dedicated page nor cited', () => {
+  // /page/complaints-and-appeals does not exist; the server redirects it to the homepage (200).
+  const home = { url: WEBSITE, fetch_status: 'ok', http_status: 200, body: 'Home. Complaints are handled by the editor.', retrieved_at: 't0' }
+  const redirected = { url: `${WEBSITE}/page/complaints-and-appeals`, final_url: WEBSITE, fetch_status: 'ok', http_status: 200, body: 'Home. Complaints are handled by the editor.', retrieved_at: 't1' }
+  const result = resolveCriterion(complaints, [home, redirected], WEBSITE)
+  assert.equal(result.status, 'met')
+  assert.equal(result.source_url, WEBSITE, 'cites where the body came from, not the nonexistent path')
+})
+
+test('a dedicated page reached by a same-origin redirect is cited at its final URL', () => {
+  const pages = [
+    { url: WEBSITE, fetch_status: 'ok', http_status: 200, body: 'Home', retrieved_at: 't0' },
+    { url: `${WEBSITE}/policies`, final_url: `${WEBSITE}/page/complaints-and-appeals/`, fetch_status: 'ok', http_status: 200, body: 'Complaints and appeals: send a complaint to the editor.', retrieved_at: 't1' },
+  ]
+  assert.equal(resolveCriterion(complaints, pages, WEBSITE).source_url, `${WEBSITE}/page/complaints-and-appeals/`)
+})
+
+test('a failed fetch of a discovered misconduct or complaints page is not read as an absence', () => {
+  const ethics = EVIDENCE_CRITERIA.find(c => c.id === 'publication_ethics_policy')
+  const home = { url: WEBSITE, fetch_status: 'ok', http_status: 200, body: 'Welcome.', retrieved_at: 't0' }
+  const misconduct = { url: `${WEBSITE}/page/research-misconduct`, fetch_status: 'forbidden', http_status: 403, body: null, retrieved_at: 't1' }
+  assert.equal(resolveCriterion(ethics, [home, misconduct], WEBSITE).status, 'blocked')
+  const timedOut = { url: `${WEBSITE}/page/complaints-and-appeals`, fetch_status: 'timeout', http_status: null, body: null, retrieved_at: 't1' }
+  assert.equal(resolveCriterion(complaints, [home, timedOut], WEBSITE).status, 'unknown')
 })
