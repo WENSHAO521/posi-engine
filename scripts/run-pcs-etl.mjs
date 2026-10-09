@@ -83,6 +83,7 @@ import { calculatePcs, calculatePcsCoverage, PCS_METHODOLOGY_VERSION } from '../
 import { isCitable } from '../src/pci.mjs'
 import { cellsFromItems } from '../src/pnci.mjs'
 import { shardFor } from '../src/sharding.mjs'
+import { withoutWithdrawn } from '../src/withdrawn.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -419,6 +420,7 @@ async function main() {
     seen.add(j.posi_id)
     return true
   })
+  corpus = withoutWithdrawn(corpus)
   if (shardCount > 1) corpus = corpus.filter(j => shardOf(j.posi_id, shardCount) === shardIndex)
   const targets = limit ? corpus.slice(0, limit) : corpus
   console.log(`Loaded ${corpus.length} unique journals${shardCount > 1 ? ` in shard ${shardIndex}/${shardCount}` : ' total'}${limit ? `, processing first ${targets.length}` : ''}`)

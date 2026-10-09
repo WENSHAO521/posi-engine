@@ -38,6 +38,7 @@ import { gunzipSync } from 'zlib'
 import { resolve, join } from 'path'
 import { rateMatureJournal, buildCitationPeerSets } from '../src/ajr-m-rerate.mjs'
 import { classifyLifecycle } from '../src/lifecycle.mjs'
+import { isWithdrawn } from '../src/withdrawn.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -90,6 +91,8 @@ function main() {
   const rows = []
   const updated = []
   for (const journal of journals) {
+    // A withdrawn journal is not rated; its record is passed through as it is.
+    if (isWithdrawn(journal)) { updated.push(journal); continue }
     const stage = classifyLifecycle(journal.early_stage_rating?.first_published ?? null, ratingDate).lifecycle_stage
     if (stage !== 'mature') {
       const { mature_rating, ...rest } = journal
@@ -131,6 +134,7 @@ function main() {
   const count = key => rows.reduce((m, r) => { const k = r[key] ?? 'n/a'; m[k] = (m[k] ?? 0) + 1; return m }, {})
   const summary = {
     input_journals: journals.length,
+    withdrawn_skipped: journals.filter(isWithdrawn).length,
     mature_journals: rows.length,
     rating_date: ratingDate.toISOString().slice(0, 10),
     rating_status_counts: count('status'),

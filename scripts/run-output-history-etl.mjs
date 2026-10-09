@@ -24,6 +24,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { resolve, join } from 'path'
 import { fetchCountsByYear } from '../src/output-history.mjs'
 import { classifyLifecycle } from '../src/lifecycle.mjs'
+import { withoutWithdrawn } from '../src/withdrawn.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -36,7 +37,7 @@ async function main() {
     process.exit(1)
   }
   const corpusRaw = JSON.parse(readFileSync(resolve(arg('corpus')), 'utf-8'))
-  const corpus = Array.isArray(corpusRaw) ? corpusRaw : (corpusRaw.journals ?? [])
+  const corpus = withoutWithdrawn(Array.isArray(corpusRaw) ? corpusRaw : (corpusRaw.journals ?? []))
   const snapshotDate = new Date().toISOString().slice(0, 10)
   const asOf = new Date(`${snapshotDate}T00:00:00Z`)
   const delayMs = Number(arg('delay-ms', '120'))
