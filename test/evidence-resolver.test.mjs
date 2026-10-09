@@ -160,6 +160,8 @@ test('data_availability_sharing: "data and code availability" and "data availabi
   assert.equal(resolveCriterion(dataAvailability, page('A Data Availability Statement is required.'), WEBSITE).status, 'met')
   // A bare "availability statement" says nothing about data.
   assert.equal(resolveCriterion(dataAvailability, page('Our online availability statement explains when issues become available to subscribers.'), WEBSITE).status, 'not_met')
+  // Code alone is not data.
+  assert.equal(resolveCriterion(dataAvailability, page('Software is described in the Code Availability section.'), WEBSITE).status, 'not_met')
   assert.equal(resolveCriterion(dataAvailability, page('Welcome to our journal. Article processing charges apply.'), WEBSITE).status, 'not_met')
 })
 
@@ -245,4 +247,21 @@ test('a redirect to another origin is cited at where the body came from, and a g
   assert.equal(result.source_url, 'https://publisher.example.org/', 'cites the real origin of the body (more mentions), not the guessed path')
   const wwwRedirect = [{ url: 'https://example.com/page/complaints-and-appeals', final_url: 'https://www.example.com/page/complaints-and-appeals', fetch_status: 'ok', http_status: 200, body: 'complaint', retrieved_at: 't1' }]
   assert.equal(resolveCriterion(complaints, wwwRedirect, 'https://example.com').source_url, 'https://www.example.com/page/complaints-and-appeals')
+})
+
+test('page ranking compares the tier first: no number of mentions lifts a relevant path above the page named for the subject', () => {
+  const many = 'complaint '.repeat(5000)
+  const pages = [
+    { url: `${WEBSITE}/page/publication-ethics`, fetch_status: 'ok', http_status: 200, body: many, retrieved_at: 't1' },
+    { url: `${WEBSITE}/page/complaints-and-appeals`, fetch_status: 'ok', http_status: 200, body: 'one complaint', retrieved_at: 't2' },
+  ]
+  assert.equal(resolveCriterion(complaints, pages, WEBSITE).source_url, `${WEBSITE}/page/complaints-and-appeals`)
+})
+
+test('page ranking reads the query string too: /index.php?page=complaints-and-appeals is the page named for the subject', () => {
+  const pages = [
+    { url: `${WEBSITE}/page/publication-ethics`, fetch_status: 'ok', http_status: 200, body: 'complaint complaint', retrieved_at: 't1' },
+    { url: `${WEBSITE}/index.php?page=complaints-and-appeals`, fetch_status: 'ok', http_status: 200, body: 'one complaint', retrieved_at: 't2' },
+  ]
+  assert.equal(resolveCriterion(complaints, pages, WEBSITE).source_url, `${WEBSITE}/index.php?page=complaints-and-appeals`)
 })

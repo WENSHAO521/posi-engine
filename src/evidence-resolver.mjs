@@ -124,7 +124,7 @@ export const EVIDENCE_CRITERIA = Object.freeze([
     patterns: ['informed consent', 'animal welfare', 'institutional review board', 'ethics committee approval', 'human subjects', '知情同意', '伦理委员会', '动物福利'],
     relevantPathKeywords: ['publication-ethics', 'ethics'] },
   { id: 'data_availability_sharing', dimension: 'research_integrity', weight: 1,
-    patterns: ['data availability', 'data and code availability', 'code availability', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'],
+    patterns: ['data availability', 'data and code availability', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'],
     relevantPathKeywords: ['data-policy', 'author-guidelines', 'for-authors'] },
   { id: 'ai_use_policy', dimension: 'research_integrity', weight: 1,
     patterns: ['use of ai', 'artificial intelligence policy', 'generative ai', 'chatgpt', 'large language model', 'ai-assisted', '人工智能政策', '生成式人工智能', '大语言模型'],
@@ -207,11 +207,14 @@ function detectCriterionInPages(criterion, fetchedPages, websiteUrl = null) {
   // the body actually came from, on any origin: a guessed path that redirects
   // to a generic page must not count as a page about the subject, nor be
   // cited as one.
-  let best = matching[0]
-  let bestScore = -1
+  let best = null
+  let bestRank = -1
+  let bestHits = -1
   for (const page of matching) {
-    const score = pageRank(effectiveUrl(page), criterion, websiteUrl) * 1000 + countPatternHits(page.body, criterion.patterns)
-    if (score > bestScore) { best = page; bestScore = score }
+    // Rank first; mention counts only break ties within a rank (the counts are unbounded).
+    const rank = pageRank(effectiveUrl(page), criterion, websiteUrl)
+    const hits = countPatternHits(page.body, criterion.patterns)
+    if (rank > bestRank || (rank === bestRank && hits > bestHits)) { best = page; bestRank = rank; bestHits = hits }
   }
   return { matched: true, sourceUrl: effectiveUrl(best), page: best }
 }
@@ -245,7 +248,7 @@ function pageRank(url, criterion, websiteUrl) {
   const normalized = url.replace(/\/+$/, '').toLowerCase()
   if (websiteUrl && normalized === websiteUrl.replace(/\/+$/, '').toLowerCase()) return 0
   let path
-  try { path = new URL(url).pathname.toLowerCase() } catch { return 0 }
+  try { const u = new URL(url); path = `${u.pathname}${u.search}`.toLowerCase() } catch { return 0 }
   if (criterion.patterns.some(p => /^[a-z][a-z ]*$/.test(p) && path.includes(p.replace(/ /g, '-')))) return 2
   if (criterion.relevantPathKeywords.some(k => path.includes(k))) return 1
   return 0
