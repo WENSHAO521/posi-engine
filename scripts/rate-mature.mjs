@@ -83,9 +83,14 @@ function main() {
   const corpusRaw = readJson(corpusPath)
   const journals = Array.isArray(corpusRaw) ? corpusRaw : (corpusRaw.journals ?? [])
   const ranking = readJson(resolve(arg('citation-ranking')))
-  const pciRecords = statSync(pciPath).isDirectory() ? readJsonTree(pciPath) : readJson(pciPath)
-  const peerSets = buildCitationPeerSets(ranking.records ?? ranking, pciRecords)
-  console.log(`Loaded ${journals.length} journals, ${(ranking.records ?? ranking).length} ranking records, ${pciRecords.length} PCI records`)
+  const allPciRecords = statSync(pciPath).isDirectory() ? readJsonTree(pciPath) : readJson(pciPath)
+  // A withdrawn journal's ranking and PCI records are left out of the peer sets: they would move other
+  // journals' percentiles and could decide whether a category reaches its minimum number of peers.
+  const withdrawnIds = new Set(journals.filter(isWithdrawn).map(j => j.posi_id))
+  const rankingRecords = (ranking.records ?? ranking).filter(r => !withdrawnIds.has(r.journal_id))
+  const pciRecords = allPciRecords.filter(r => !withdrawnIds.has(r.journal_id))
+  const peerSets = buildCitationPeerSets(rankingRecords, pciRecords)
+  console.log(`Loaded ${journals.length} journals, ${rankingRecords.length} ranking records, ${pciRecords.length} PCI records`)
   console.log(`Rating date: ${ratingDate.toISOString().slice(0, 10)}`)
 
   const rows = []

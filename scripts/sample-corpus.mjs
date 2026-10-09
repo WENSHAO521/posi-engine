@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { classifyLifecycle } from '../src/lifecycle.mjs'
+import { withoutWithdrawn } from '../src/withdrawn.mjs'
 
 function hostOf(url) {
   try { return new URL(url).host.replace(/^www\./, '') } catch { return '(no website)' }
@@ -61,7 +62,7 @@ function arg(name, fallback = null) {
 
 function main() {
   const raw = JSON.parse(readFileSync(resolve(arg('corpus')), 'utf-8'))
-  const corpus = Array.isArray(raw) ? raw : (raw.journals ?? [])
+  const corpus = withoutWithdrawn(Array.isArray(raw) ? raw : (raw.journals ?? []))
   const asOf = new Date(`${arg('date', new Date().toISOString().slice(0, 10))}T00:00:00Z`)
   const rateable = corpus.filter(j => ['early_stage', 'mature'].includes(classifyLifecycle(j.early_stage_rating?.first_published ?? null, asOf).lifecycle_stage))
   const sample = stratifiedSample(rateable, Number(arg('n', '50')))

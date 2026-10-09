@@ -127,3 +127,23 @@ test('buildGlobalCorpus: Crossref publisher fills a journal OpenAlex has none fo
   const none = buildGlobalCorpus([fromOpenAlexSource({ id: 'S3', display_name: 'Nothing', issn_l: '6666-7777', issn: ['6666-7777'] })], [])
   assert.deepEqual([none[0].publisher, none[0].publisher_source], [null, null])
 })
+
+test('a withdrawn curated journal is left out of the corpus, with the harvested records that resolve to it', () => {
+  const oa = [
+    fromOpenAlexSource(oaSource()), // 1234-5678 / 8765-4321: the withdrawn journal
+    fromOpenAlexSource(oaSource({ id: 'https://openalex.org/S2', display_name: 'Journal B', issn_l: '1111-2222', issn: ['1111-2222'] })),
+  ]
+  const crossref = [{ title: 'Journal A', publisher: 'Pub A', issns: ['8765-4321'], crossref_total_dois: 10 }]
+  const curated = [{ posi_id: 'POSI-J-000030', issns: ['8765-4321'], collection_status: 'withdrawn' }]
+  const out = buildGlobalCorpus(oa, crossref, curated)
+  assert.deepEqual(out.map(r => r.issn_l), ['1111-2222'], 'only the unrelated journal remains')
+  assert.ok(!out.some(r => r.posi_id === 'POSI-J-000030'))
+})
+
+test('a curated journal that is not withdrawn is still kept; a null or core status counts as in the database', () => {
+  for (const collection_status of [undefined, null, 'core', 'discovered']) {
+    const out = buildGlobalCorpus([fromOpenAlexSource(oaSource())], [], [{ posi_id: 'POSI-J-000042', issns: ['8765-4321'], collection_status }])
+    assert.equal(out.length, 1, String(collection_status))
+    assert.equal(out[0].posi_id, 'POSI-J-000042')
+  }
+})
