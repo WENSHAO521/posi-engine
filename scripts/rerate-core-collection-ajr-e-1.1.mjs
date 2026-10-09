@@ -38,6 +38,7 @@ import { resolve, join } from 'path'
 import { rateJournal, deprecatedFieldsFor } from '../src/ajr-e-rerate.mjs'
 import { getAJRRating, AJR_RATING_VERSION } from '../src/evaluation.mjs'
 import { AJR_E_METHODOLOGY_VERSION } from '../src/ajr-early-stage.mjs'
+import { isWithdrawn } from '../src/withdrawn.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -70,6 +71,7 @@ function main() {
   // --- Pass 1: rate every journal independently (no cross-journal state yet) ---
   const perJournal = []
   for (const journal of journals) {
+    if (isWithdrawn(journal)) { console.log(`[${journal.posi_id}] ${journal.title} -- withdrawn, not rated`); continue }
     const posiId = journal.posi_id
     const journalEvidence = loadJsonIfExists(join(evidenceJournalsDir, `${posiId}.json`))
     const worksEvidence = loadJsonIfExists(join(evidenceWorksDir, `${posiId}.json`))
@@ -113,6 +115,7 @@ function main() {
   // the Crossref total the refreshed article sample was drawn from.
   const updatedJournals = journals.map(j => {
     const p = perJournal.find(x => x.posi_id === j.posi_id)
+    if (!p) return j // withdrawn: the record is written back as it is
     const rating = { ...p.newRating }
     const deprecated = deprecatedFieldsFor(p.oldRating, rating)
     for (const f of deprecated) if (p.oldRating && f in p.oldRating) rating[f] = p.oldRating[f]
@@ -138,6 +141,7 @@ function main() {
 
   const summary = {
     input_journals: journals.length,
+    withdrawn_skipped: journals.filter(isWithdrawn).length,
     rating_date: ratingDate.toISOString().slice(0, 10),
     rating_status_counts: statusCounts,
     ajr_rating_counts: ratingCounts,

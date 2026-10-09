@@ -38,6 +38,7 @@ import { gunzipSync } from 'zlib'
 import { resolve, join } from 'path'
 import { rateMatureJournal, buildCitationPeerSets } from '../src/ajr-m-rerate.mjs'
 import { classifyLifecycle } from '../src/lifecycle.mjs'
+import { isWithdrawn } from '../src/withdrawn.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -82,14 +83,21 @@ function main() {
   const corpusRaw = readJson(corpusPath)
   const journals = Array.isArray(corpusRaw) ? corpusRaw : (corpusRaw.journals ?? [])
   const ranking = readJson(resolve(arg('citation-ranking')))
-  const pciRecords = statSync(pciPath).isDirectory() ? readJsonTree(pciPath) : readJson(pciPath)
-  const peerSets = buildCitationPeerSets(ranking.records ?? ranking, pciRecords)
-  console.log(`Loaded ${journals.length} journals, ${(ranking.records ?? ranking).length} ranking records, ${pciRecords.length} PCI records`)
+  const allPciRecords = statSync(pciPath).isDirectory() ? readJsonTree(pciPath) : readJson(pciPath)
+  // A withdrawn journal's ranking and PCI records are left out of the peer sets: they would move other
+  // journals' percentiles and could decide whether a category reaches its minimum number of peers.
+  const withdrawnIds = new Set(journals.filter(isWithdrawn).map(j => j.posi_id))
+  const rankingRecords = (ranking.records ?? ranking).filter(r => !withdrawnIds.has(r.journal_id))
+  const pciRecords = allPciRecords.filter(r => !withdrawnIds.has(r.journal_id))
+  const peerSets = buildCitationPeerSets(rankingRecords, pciRecords)
+  console.log(`Loaded ${journals.length} journals, ${rankingRecords.length} ranking records, ${pciRecords.length} PCI records`)
   console.log(`Rating date: ${ratingDate.toISOString().slice(0, 10)}`)
 
   const rows = []
   const updated = []
   for (const journal of journals) {
+    // A withdrawn journal is not rated; its record is passed through as it is.
+    if (isWithdrawn(journal)) { updated.push(journal); continue }
     const stage = classifyLifecycle(journal.early_stage_rating?.first_published ?? null, ratingDate).lifecycle_stage
     if (stage !== 'mature') {
       const { mature_rating, ...rest } = journal
@@ -131,6 +139,7 @@ function main() {
   const count = key => rows.reduce((m, r) => { const k = r[key] ?? 'n/a'; m[k] = (m[k] ?? 0) + 1; return m }, {})
   const summary = {
     input_journals: journals.length,
+    withdrawn_skipped: journals.filter(isWithdrawn).length,
     mature_journals: rows.length,
     rating_date: ratingDate.toISOString().slice(0, 10),
     rating_status_counts: count('status'),

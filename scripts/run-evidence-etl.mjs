@@ -53,6 +53,7 @@ import { applyPublisherInheritance } from '../src/evidence-publisher-registry.mj
 import { journalItemShares, applyCrossrefSignals } from '../src/crossref-policy-signals.mjs'
 import { fetchCrossrefPolicySample } from '../src/crossref-policy-fetch.mjs'
 import { evidenceCoverage, dimensionScore, EVIDENCE_COVERAGE_METHODOLOGY_VERSION } from '../src/evidence-coverage.mjs'
+import { withoutWithdrawn } from '../src/withdrawn.mjs'
 
 const USER_AGENT = 'POSI-EvidenceETL/1.0 (+https://posi.panorama-sg.com; posi@panorama-sg.com)'
 // Budget for pages found by link discovery. It used to be 30 minus every
@@ -308,7 +309,7 @@ async function main() {
   const journalsOutDir = join(outDir, 'journals')
   if (!existsSync(journalsOutDir)) mkdirSync(journalsOutDir, { recursive: true })
 
-  const corpus = JSON.parse(readFileSync(corpusPath, 'utf-8'))
+  const corpus = withoutWithdrawn(JSON.parse(readFileSync(corpusPath, 'utf-8')))
   const targets = limit ? corpus.slice(0, limit) : corpus
   console.log(`Loaded ${corpus.length} journals from ${corpusPath}${limit ? ` (processing first ${targets.length})` : ''}`)
 

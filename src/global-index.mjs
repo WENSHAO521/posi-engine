@@ -20,6 +20,7 @@
  *     merge on; both are left out
  */
 import { classifyPsc } from './psc-classify.mjs'
+import { isWithdrawn } from './withdrawn.mjs'
 
 export const GLOBAL_INDEX_METHODOLOGY_VERSION = 'GLOBAL-INDEX-1.0'
 
@@ -93,7 +94,10 @@ function alternates(title, titles) {
  * Merge harvested records into one corpus.
  * @param {ReturnType<typeof fromOpenAlexSource>[]} openalex
  * @param {ReturnType<typeof fromCrossrefJournal>[]} crossref
- * @param {{ posi_id: string, issns: string[], title?: string|null, alternate_titles?: (string|object)[]|null }[]} curated - existing curated records (POSI-J ids)
+ * @param {{ posi_id: string, issns: string[], title?: string|null, alternate_titles?: (string|object)[]|null, collection_status?: string|null }[]} curated - existing curated records (POSI-J ids).
+ *   A record with `collection_status: 'withdrawn'` takes its journal out of the corpus altogether: the harvested
+ *   records that resolve to it (by ISSN) are dropped, so it is neither crawled for PCS nor ranked, as the website
+ *   drops a withdrawn journal from the editions.
  * @returns {object[]} corpus records shaped for run-pcs-etl.mjs (posi_id, issn_online, issn_print, title, ...).
  *   A curated record whose harvested title differs from its curated title
  *   carries the harvested one as `registry_title` (see titleMismatches).
@@ -139,6 +143,7 @@ export function buildGlobalCorpus(openalex, crossref, curated = []) {
   const out = []
   for (const r of records) {
     const c = r.issns.map(i => curatedByIssn.get(i)).find(Boolean) ?? null
+    if (isWithdrawn(c)) continue
     const key = c?.posi_id ?? `ISSNL-${r.issn_l ?? r.issns[0]}`
     if (seen.has(key)) continue // two harvested records resolving to one curated journal
     seen.add(key)

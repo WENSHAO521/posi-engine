@@ -51,6 +51,7 @@ import {
   computePublicationWindowStats, deriveDepositTimeliness, WORKS_RESOLVER_METHODOLOGY_VERSION, excludeFutureWorks,
 } from '../src/works-resolver.mjs'
 import { assessArticleSampleAdequacy, TARGET_ARTICLE_SAMPLE_SIZE } from '../src/ajr-early-stage.mjs'
+import { withoutWithdrawn } from '../src/withdrawn.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -178,7 +179,7 @@ async function main() {
   if (!existsSync(journalsOutDir)) mkdirSync(journalsOutDir, { recursive: true })
 
   const corpusRaw = JSON.parse(readFileSync(corpusPath, 'utf-8'))
-  const corpus = Array.isArray(corpusRaw) ? corpusRaw : (corpusRaw.journals ?? [])
+  const corpus = withoutWithdrawn(Array.isArray(corpusRaw) ? corpusRaw : (corpusRaw.journals ?? []))
   const targets = limit ? corpus.slice(0, limit) : corpus
   console.log(`Loaded ${corpus.length} journals from ${corpusPath}${limit ? ` (processing first ${targets.length})` : ''}`)
 
