@@ -102,12 +102,12 @@ export const EVIDENCE_CRITERIA = Object.freeze([
     relevantPathKeywords: ['peer-review', 'editorial-policies', 'for-authors'] },
   { id: 'complaints_appeals', dimension: 'editorial_governance', weight: 2,
     patterns: ['complaint', 'appeal', 'grievance', 'dispute resolution', '投诉', '申诉', '异议'],
-    relevantPathKeywords: ['editorial-policies', 'publication-ethics', 'ethics'] },
+    relevantPathKeywords: ['editorial-policies', 'publication-ethics', 'ethics', 'complaint'] },
 
   // --- Dimension 2: Research Integrity (AJR-E-1.1-SPEC.md § 4, RESEARCH_INTEGRITY_ITEMS) ---
   { id: 'publication_ethics_policy', dimension: 'research_integrity', weight: 3,
     patterns: ['publication ethics', 'ethics statement', 'ethics and misconduct', 'misconduct policy', 'code of conduct', '出版伦理', '学术不端', '科研诚信'],
-    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
+    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies', 'misconduct'] },
   { id: 'corrections_retractions_policy', dimension: 'research_integrity', weight: 3,
     patterns: ['retraction', 'correction policy', 'errata', 'erratum', 'corrigendum', '勘误', '撤稿', '更正声明'],
     relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies', 'corrections', 'retractions'] },
@@ -119,12 +119,12 @@ export const EVIDENCE_CRITERIA = Object.freeze([
     relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
   { id: 'plagiarism_similarity_policy', dimension: 'research_integrity', weight: 2,
     patterns: ['plagiarism', 'similarity check', 'turnitin', 'ithenticate', 'similarity index', '抄袭', '查重', '相似度检测', '剽窃'],
-    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies'] },
+    relevantPathKeywords: ['publication-ethics', 'ethics', 'editorial-policies', 'misconduct'] },
   { id: 'human_animal_ethics_consent', dimension: 'research_integrity', weight: 1,
     patterns: ['informed consent', 'animal welfare', 'institutional review board', 'ethics committee approval', 'human subjects', '知情同意', '伦理委员会', '动物福利'],
     relevantPathKeywords: ['publication-ethics', 'ethics'] },
   { id: 'data_availability_sharing', dimension: 'research_integrity', weight: 1,
-    patterns: ['data availability', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'],
+    patterns: ['data availability', 'data and code availability', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'],
     relevantPathKeywords: ['data-policy', 'author-guidelines', 'for-authors'] },
   { id: 'ai_use_policy', dimension: 'research_integrity', weight: 1,
     patterns: ['use of ai', 'artificial intelligence policy', 'generative ai', 'chatgpt', 'large language model', 'ai-assisted', '人工智能政策', '生成式人工智能', '大语言模型'],
@@ -196,14 +196,62 @@ function isRelevantPage(url, websiteUrl, relevantPathKeywords) {
  *   fallback branch below.
  * @returns {{ matched: boolean, sourceUrl: string|null }}
  */
-function detectCriterionInPages(criterion, fetchedPages) {
+function detectCriterionInPages(criterion, fetchedPages, websiteUrl = null) {
   const okPages = fetchedPages.filter(p => p.fetch_status === 'ok' && p.body)
-  for (const page of okPages) {
-    if (hasAny(page.body, criterion.patterns)) {
-      return { matched: true, sourceUrl: page.url }
-    }
+  const matching = okPages.filter(page => hasAny(page.body, criterion.patterns))
+  if (matching.length === 0) return { matched: false, sourceUrl: null, page: null }
+  // Whether the criterion is met does not depend on which page is cited. The
+  // cited page is the best evidence: a page whose URL names the subject over
+  // one that merely mentions it (a menu entry on an archive page), then the
+  // page with more mentions, then the earliest fetched. The URL used is where
+  // the body actually came from, on any origin: a guessed path that redirects
+  // to a generic page must not count as a page about the subject, nor be
+  // cited as one.
+  let best = null
+  let bestRank = -1
+  let bestHits = -1
+  for (const page of matching) {
+    // Rank first; mention counts only break ties within a rank (the counts are unbounded).
+    const rank = pageRank(effectiveUrl(page), criterion, websiteUrl)
+    const hits = countPatternHits(page.body, criterion.patterns)
+    if (rank > bestRank || (rank === bestRank && hits > bestHits)) { best = page; bestRank = rank; bestHits = hits }
   }
-  return { matched: false, sourceUrl: null }
+  return { matched: true, sourceUrl: effectiveUrl(best), page: best }
+}
+
+/** The URL a fetched page's body came from: after redirects, whatever the origin. */
+function effectiveUrl(page) {
+  return page.final_url || page.url
+}
+
+/** Number of pattern occurrences in `text`, case-insensitive. */
+function countPatternHits(text, patterns) {
+  const lower = text.toLowerCase()
+  let n = 0
+  for (const p of patterns) {
+    for (let i = lower.indexOf(p); i !== -1; i = lower.indexOf(p, i + p.length)) n++
+  }
+  return n
+}
+
+/**
+ * How strongly a page's URL ties it to a criterion's subject, for choosing the
+ * cited page: 2 when the path names the subject itself (one of the criterion's
+ * English patterns written as a slug: `complaint` in /page/complaints-and-appeals,
+ * `retraction` in /page/retraction-and-correction-policy), 1 when it is only a
+ * path where the subject might be discussed (a relevantPathKeywords entry such
+ * as `ethics` for complaints), 0 otherwise. The homepage is always 0.
+ * relevantPathKeywords exists to classify failed fetches and is broader than
+ * "dedicated", so it ranks below the criterion's own wording.
+ */
+function pageRank(url, criterion, websiteUrl) {
+  const normalized = url.replace(/\/+$/, '').toLowerCase()
+  if (websiteUrl && normalized === websiteUrl.replace(/\/+$/, '').toLowerCase()) return 0
+  let path
+  try { const u = new URL(url); path = `${u.pathname}${u.search}`.toLowerCase() } catch { return 0 }
+  if (criterion.patterns.some(p => /^[a-z][a-z ]*$/.test(p) && path.includes(p.replace(/ /g, '-')))) return 2
+  if (criterion.relevantPathKeywords.some(k => path.includes(k))) return 1
+  return 0
 }
 
 /**
@@ -223,9 +271,9 @@ export function resolveCriterion(criterion, fetchedPages, websiteUrl = null) {
     return { id: criterion.id, weight: criterion.weight, status: 'not_applicable', source_url: null, retrieved_at: null }
   }
 
-  const { matched, sourceUrl } = detectCriterionInPages(criterion, fetchedPages)
+  const { matched, sourceUrl, page } = detectCriterionInPages(criterion, fetchedPages, websiteUrl)
   if (matched) {
-    return { id: criterion.id, weight: criterion.weight, status: 'met', source_url: sourceUrl, retrieved_at: fetchedPages.find(p => p.url === sourceUrl)?.retrieved_at ?? null }
+    return { id: criterion.id, weight: criterion.weight, status: 'met', source_url: sourceUrl, retrieved_at: page.retrieved_at ?? null }
   }
 
   const relevantPages = fetchedPages.filter(p => isRelevantPage(p.url, websiteUrl, criterion.relevantPathKeywords))

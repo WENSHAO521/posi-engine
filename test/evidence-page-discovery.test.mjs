@@ -169,3 +169,8 @@ test('discoverLinks: a hit that runs past the journal code still counts', () => 
   const html = `<a href="/journal/data/page/data-sharing">Read more</a>`
   assert.equal(discoverLinks(html, 'https://example.com/', { ignoreTokens: ['data'] }).length, 1)
 })
+
+test('discoverLinks finds complaints and misconduct pages', () => {
+  const html = `<a href="/page/complaints-and-appeals">Complaints</a><a href="/page/research-misconduct">Misconduct</a><a href="/page/volumes">Volumes</a>`
+  assert.deepEqual(discoverLinks(html, 'https://example.com/').sort(), ['https://example.com/page/complaints-and-appeals', 'https://example.com/page/research-misconduct'])
+})
