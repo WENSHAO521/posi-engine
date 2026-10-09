@@ -211,3 +211,19 @@ test('rateJournal: months_since_launch is re-derived via LIFECYCLE-1.1 exact-dat
   assert.equal(typeof result.months_since_launch, 'number')
   assert.equal(result.lifecycle_stage, 'early_stage')
 })
+
+import { deprecatedFieldsFor, RETIRED_RATING_FIELDS } from '../src/ajr-e-rerate.mjs'
+
+test('deprecatedFieldsFor: keeps the previous rating\'s marker', () => {
+  assert.deepEqual(deprecatedFieldsFor({ deprecated_fields: ['quartile'] }, { quartile: null, cohort_key: null }), ['quartile'])
+})
+
+test('deprecatedFieldsFor: a journal rated for the first time gets the retired fields its rating carries', () => {
+  const rating = { total: 80, quartile: null, quartile_label: null, cohort_key: null, cohort_level: null, cohort_size: null, ranking_method: null }
+  assert.deepEqual(deprecatedFieldsFor(null, rating), [...RETIRED_RATING_FIELDS])
+  assert.deepEqual(deprecatedFieldsFor({ version: 'AJR-E-1.0' }, rating), [...RETIRED_RATING_FIELDS], 'an old rating with no marker counts as unmarked')
+})
+
+test('deprecatedFieldsFor: no retired fields in the rating, no marker entries', () => {
+  assert.deepEqual(deprecatedFieldsFor(undefined, { total: 80 }), [])
+})

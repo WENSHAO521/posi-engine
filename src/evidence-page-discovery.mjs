@@ -49,7 +49,7 @@ const DISCOVERY_KEYWORDS = [
   'ethic', 'polic', 'author-guide', 'guideline', 'submission', 'submit',
   'apc', 'fee', 'charge', 'copyright', 'licens', 'retract', 'correction',
   'errata', 'archiv', 'preserv', 'data-availab', 'data-shar', 'ai-polic',
-  'artificial-intelligence', 'contact',
+  'artificial-intelligence', 'contact', 'complaint', 'misconduct',
 ]
 
 /**

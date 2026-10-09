@@ -124,7 +124,7 @@ export const EVIDENCE_CRITERIA = Object.freeze([
     patterns: ['informed consent', 'animal welfare', 'institutional review board', 'ethics committee approval', 'human subjects', '知情同意', '伦理委员会', '动物福利'],
     relevantPathKeywords: ['publication-ethics', 'ethics'] },
   { id: 'data_availability_sharing', dimension: 'research_integrity', weight: 1,
-    patterns: ['data availability', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'],
+    patterns: ['data availability', 'data and code availability', 'code availability', 'availability statement', 'data sharing', 'data accessibility', 'data policy', '数据可用性', '数据共享', '数据政策'],
     relevantPathKeywords: ['data-policy', 'author-guidelines', 'for-authors'] },
   { id: 'ai_use_policy', dimension: 'research_integrity', weight: 1,
     patterns: ['use of ai', 'artificial intelligence policy', 'generative ai', 'chatgpt', 'large language model', 'ai-assisted', '人工智能政策', '生成式人工智能', '大语言模型'],
@@ -196,14 +196,47 @@ function isRelevantPage(url, websiteUrl, relevantPathKeywords) {
  *   fallback branch below.
  * @returns {{ matched: boolean, sourceUrl: string|null }}
  */
-function detectCriterionInPages(criterion, fetchedPages) {
+function detectCriterionInPages(criterion, fetchedPages, websiteUrl = null) {
   const okPages = fetchedPages.filter(p => p.fetch_status === 'ok' && p.body)
-  for (const page of okPages) {
-    if (hasAny(page.body, criterion.patterns)) {
-      return { matched: true, sourceUrl: page.url }
-    }
+  const matching = okPages.filter(page => hasAny(page.body, criterion.patterns))
+  if (matching.length === 0) return { matched: false, sourceUrl: null }
+  // Whether the criterion is met does not depend on which page is cited. The
+  // cited page is the best evidence: a page dedicated to the subject (its URL
+  // names the criterion) over one that merely mentions it (a menu entry on an
+  // archive page), then the page with more mentions, then the earliest fetched.
+  let best = matching[0]
+  let bestScore = -1
+  for (const page of matching) {
+    const score = (isDedicatedPage(page.url, criterion, websiteUrl) ? 1000 : 0) + countPatternHits(page.body, criterion.patterns)
+    if (score > bestScore) { best = page; bestScore = score }
   }
-  return { matched: false, sourceUrl: null }
+  return { matched: true, sourceUrl: best.url }
+}
+
+/** Number of pattern occurrences in `text`, case-insensitive. */
+function countPatternHits(text, patterns) {
+  const lower = text.toLowerCase()
+  let n = 0
+  for (const p of patterns) {
+    for (let i = lower.indexOf(p); i !== -1; i = lower.indexOf(p, i + p.length)) n++
+  }
+  return n
+}
+
+/**
+ * Whether a page is dedicated to a criterion's subject: its URL path contains
+ * one of the criterion's own path keywords, or one of its English patterns
+ * written as a slug ("complaint" in /page/complaints-and-appeals,
+ * "retraction" in /page/retraction-and-correction-policy). The homepage and
+ * the generic "About" pages are never dedicated.
+ */
+function isDedicatedPage(url, criterion, websiteUrl) {
+  const normalized = url.replace(/\/+$/, '').toLowerCase()
+  if (websiteUrl && normalized === websiteUrl.replace(/\/+$/, '').toLowerCase()) return false
+  let path
+  try { path = new URL(url).pathname.toLowerCase() } catch { return false }
+  if (criterion.relevantPathKeywords.some(k => path.includes(k))) return true
+  return criterion.patterns.some(p => /^[a-z][a-z ]*$/.test(p) && path.includes(p.replace(/ /g, '-')))
 }
 
 /**
@@ -223,7 +256,7 @@ export function resolveCriterion(criterion, fetchedPages, websiteUrl = null) {
     return { id: criterion.id, weight: criterion.weight, status: 'not_applicable', source_url: null, retrieved_at: null }
   }
 
-  const { matched, sourceUrl } = detectCriterionInPages(criterion, fetchedPages)
+  const { matched, sourceUrl } = detectCriterionInPages(criterion, fetchedPages, websiteUrl)
   if (matched) {
     return { id: criterion.id, weight: criterion.weight, status: 'met', source_url: sourceUrl, retrieved_at: fetchedPages.find(p => p.url === sourceUrl)?.retrieved_at ?? null }
   }

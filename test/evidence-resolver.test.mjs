@@ -150,3 +150,42 @@ test('resolveAllCriteria returns exactly one item per EVIDENCE_CRITERIA entry, w
   assert.equal(totalFor('research_integrity'), 15, 'Dimension 2 (8 items) must sum to 15, matching AJR-E-1.1-SPEC.md § 4')
   assert.equal(totalFor('transparency'), 10, 'Dimension 7 (7 items, INCLUDING other_applicable_terms) must sum to the full 10, matching AJR-E-1.1-SPEC.md § 9 -- the prior 9/10 was the P0-B gap')
 })
+
+const complaints = EVIDENCE_CRITERIA.find(c => c.id === 'complaints_appeals')
+const dataAvailability = EVIDENCE_CRITERIA.find(c => c.id === 'data_availability_sharing')
+
+test('data_availability_sharing: "data and code availability" and "availability statement" count', () => {
+  const page = body => [{ url: `${WEBSITE}/for-authors`, fetch_status: 'ok', http_status: 200, body, retrieved_at: '2026-10-09T00:00:00Z' }]
+  assert.equal(resolveCriterion(dataAvailability, page('Every manuscript must include a Data and Code Availability section.'), WEBSITE).status, 'met')
+  assert.equal(resolveCriterion(dataAvailability, page('Include an availability statement for materials.'), WEBSITE).status, 'met')
+  assert.equal(resolveCriterion(dataAvailability, page('Welcome to our journal. Article processing charges apply.'), WEBSITE).status, 'not_met')
+})
+
+test('the cited source is the dedicated page, not the first page that mentions the subject', () => {
+  // A menu entry on an archive page matches first in fetch order; the dedicated page is the better evidence.
+  const pages = [
+    { url: WEBSITE, fetch_status: 'ok', http_status: 200, body: 'Home', retrieved_at: 't0' },
+    { url: `${WEBSITE}/issue/archive`, fetch_status: 'ok', http_status: 200, body: 'Menu: Complaints and Appeals | Volumes', retrieved_at: 't1' },
+    { url: `${WEBSITE}/page/complaints-and-appeals`, fetch_status: 'ok', http_status: 200, body: 'Complaints: send a complaint to the editor. An appeal is reviewed by...', retrieved_at: 't2' },
+  ]
+  const result = resolveCriterion(complaints, pages, WEBSITE)
+  assert.equal(result.status, 'met')
+  assert.equal(result.source_url, `${WEBSITE}/page/complaints-and-appeals`)
+  assert.equal(result.retrieved_at, 't2')
+})
+
+test('the cited source: with no dedicated page, the page with more mentions wins, then the earliest', () => {
+  const pages = [
+    { url: `${WEBSITE}/a`, fetch_status: 'ok', http_status: 200, body: 'one complaint', retrieved_at: 't1' },
+    { url: `${WEBSITE}/b`, fetch_status: 'ok', http_status: 200, body: 'complaint complaint complaint', retrieved_at: 't2' },
+    { url: `${WEBSITE}/c`, fetch_status: 'ok', http_status: 200, body: 'complaint complaint complaint', retrieved_at: 't3' },
+  ]
+  assert.equal(resolveCriterion(complaints, pages, WEBSITE).source_url, `${WEBSITE}/b`)
+})
+
+test('which page is cited never changes whether the criterion is met', () => {
+  const pages = [{ url: WEBSITE, fetch_status: 'ok', http_status: 200, body: 'Contact: complaints are handled by the editor.', retrieved_at: 't0' }]
+  const result = resolveCriterion(complaints, pages, WEBSITE)
+  assert.equal(result.status, 'met')
+  assert.equal(result.source_url, WEBSITE, 'the homepage is never "dedicated" but is still cited when it is the only match')
+})

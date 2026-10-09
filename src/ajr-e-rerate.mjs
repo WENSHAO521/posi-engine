@@ -216,3 +216,21 @@ export function rateJournal({ journal, journalEvidence, worksEvidence, ratingDat
     evidence_coverage: coverage.coverage_percent,
   }
 }
+
+/** The quartile/cohort fields retired by POSI-EVAL-1.0 (AJR Rating replaces the E-Q ranking). */
+export const RETIRED_RATING_FIELDS = Object.freeze(['quartile', 'quartile_label', 'cohort_key', 'cohort_level', 'cohort_size', 'ranking_method'])
+
+/**
+ * The `deprecated_fields` marker for a re-rated journal: the previous rating's
+ * marker when it had one, otherwise the retired fields the new rating carries.
+ * A journal rated for the first time has no previous marker, and its rating
+ * would otherwise hold the retired fields without saying they are retired,
+ * unlike every other AJR-E-1.2 record.
+ * @param {object|null|undefined} oldRating
+ * @param {object} newRating
+ * @returns {string[]}
+ */
+export function deprecatedFieldsFor(oldRating, newRating) {
+  if (oldRating?.deprecated_fields) return oldRating.deprecated_fields
+  return RETIRED_RATING_FIELDS.filter(f => f in newRating)
+}

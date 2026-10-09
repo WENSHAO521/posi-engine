@@ -35,7 +35,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs'
 import { resolve, join } from 'path'
-import { rateJournal } from '../src/ajr-e-rerate.mjs'
+import { rateJournal, deprecatedFieldsFor } from '../src/ajr-e-rerate.mjs'
 import { getAJRRating, AJR_RATING_VERSION } from '../src/evaluation.mjs'
 import { AJR_E_METHODOLOGY_VERSION } from '../src/ajr-early-stage.mjs'
 
@@ -114,8 +114,8 @@ function main() {
   const updatedJournals = journals.map(j => {
     const p = perJournal.find(x => x.posi_id === j.posi_id)
     const rating = { ...p.newRating }
-    const deprecated = p.oldRating?.deprecated_fields ?? []
-    for (const f of deprecated) if (f in p.oldRating) rating[f] = p.oldRating[f]
+    const deprecated = deprecatedFieldsFor(p.oldRating, rating)
+    for (const f of deprecated) if (p.oldRating && f in p.oldRating) rating[f] = p.oldRating[f]
     if (deprecated.length) rating.deprecated_fields = deprecated
     const works = loadJsonIfExists(join(evidenceWorksDir, `${j.posi_id}.json`))
     const articleCount = works?.crossref_status === 200 && works.total_results != null ? works.total_results : j.article_count
