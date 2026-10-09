@@ -63,3 +63,109 @@ test('candidateUrls builds one absolute URL per CANDIDATE_PATHS entry, with the 
   assert.equal(urls[0], 'https://journal.example.com')
   assert.ok(urls.includes('https://journal.example.com/publication-ethics'))
 })
+
+import { selectNewLinks } from '../src/evidence-page-discovery.mjs'
+
+test('selectNewLinks skips links already fetched and keeps discovery order', () => {
+  const fetched = new Set(['https://example.com/a'])
+  assert.deepEqual(
+    selectNewLinks(['https://example.com/a', 'https://example.com/b', 'https://example.com/c'], fetched, 10),
+    ['https://example.com/b', 'https://example.com/c'],
+  )
+})
+
+test('selectNewLinks caps at the budget, and a zero or negative budget selects nothing', () => {
+  const links = ['https://example.com/a', 'https://example.com/b', 'https://example.com/c']
+  assert.equal(selectNewLinks(links, new Set(), 2).length, 2)
+  assert.deepEqual(selectNewLinks(links, new Set(), 0), [])
+  assert.deepEqual(selectNewLinks(links, new Set(), -3), [])
+})
+
+test('selectNewLinks: the budget is not reduced by the fixed candidate paths already tried', () => {
+  // Every fixed candidate path is "already fetched" (mostly 404s on a given site);
+  // all 30 discovered links must still be selectable.
+  const fetched = new Set(candidateUrls('https://example.com'))
+  const discovered = Array.from({ length: 30 }, (_, i) => `https://example.com/journal/x/page/policy-${i}`)
+  assert.equal(selectNewLinks(discovered, fetched, 30).length, 30)
+})
+
+import { discoveryBaseUrl } from '../src/evidence-page-discovery.mjs'
+
+test('discoverLinks: the journal code in every URL does not count as a keyword hit', () => {
+  // "aimed" contains the discovery keyword "aim"; without ignoreTokens every link under it matches.
+  const html = `
+    <a href="/journal/aimed/issue/view/3">Volume 2</a>
+    <a href="/journal/aimed/article/view/12">A paper</a>
+    <a href="/journal/aimed/page/ai-use-policy">AI Use</a>
+    <a href="/journal/aimed/page/human-and-animal-ethics">Ethics</a>
+  `
+  const base = 'https://www.ai-press.org/journal/aimed/page/policies'
+  const without = discoverLinks(html, base)
+  assert.equal(without.length, 4, 'documents the problem: every link matches through "aim"')
+  const withTokens = discoverLinks(html, base, { ignoreTokens: ['aimed'] })
+  assert.deepEqual(withTokens.sort(), [
+    'https://www.ai-press.org/journal/aimed/page/ai-use-policy',
+    'https://www.ai-press.org/journal/aimed/page/human-and-animal-ethics',
+  ])
+})
+
+test('discoverLinks: a keyword in the link text still matches when the URL says nothing', () => {
+  const html = `<a href="/node/123">Publication Ethics</a><a href="/node/124">Our team</a>`
+  assert.deepEqual(discoverLinks(html, 'https://example.com/journal/x/', { ignoreTokens: ['x'] }), ['https://example.com/node/123'])
+})
+
+test('discoverLinks finds contact pages', () => {
+  assert.deepEqual(discoverLinks('<a href="/page/contact-us">Contact</a>', 'https://example.com/'), ['https://example.com/page/contact-us'])
+})
+
+test('discoveryBaseUrl uses the post-redirect URL so relative links resolve under it', () => {
+  const page = { url: 'https://example.com/policies', final_url: 'https://example.com/policies/' }
+  assert.equal(discoveryBaseUrl(page), 'https://example.com/policies/')
+  assert.deepEqual(discoverLinks('<a href="ai-policy">AI</a>', discoveryBaseUrl(page)), ['https://example.com/policies/ai-policy'])
+  // without it, the same link resolves to the wrong place
+  assert.deepEqual(discoverLinks('<a href="ai-policy">AI</a>', page.url), ['https://example.com/ai-policy'])
+})
+
+test('discoveryBaseUrl keeps the requested URL when there is no redirect, or when it leaves the origin', () => {
+  assert.equal(discoveryBaseUrl({ url: 'https://example.com/a' }), 'https://example.com/a')
+  assert.equal(discoveryBaseUrl({ url: 'https://example.com/a', final_url: 'https://example.com/a' }), 'https://example.com/a')
+  assert.equal(discoveryBaseUrl({ url: 'https://example.com/a', final_url: 'https://other.test/a' }), 'https://example.com/a')
+  assert.equal(discoveryBaseUrl({ url: 'https://example.com/a', final_url: 'not a url' }), 'https://example.com/a')
+})
+
+test('discoverLinks: ignoring the journal code leaves the link text alone', () => {
+  // A journal coded "ethics": the "Ethics" anchor must still match.
+  const html = `<a href="/node/123">Ethics</a><a href="/journal/ethics/issue/view/3">Volume 3</a>`
+  assert.deepEqual(
+    discoverLinks(html, 'https://example.com/journal/ethics/', { ignoreTokens: ['ethics'] }),
+    ['https://example.com/node/123'],
+  )
+})
+
+test('discoverLinks: ignoring the journal code does not touch the host', () => {
+  const html = `<a href="/page/home">Home</a>`
+  assert.deepEqual(discoverLinks(html, 'https://about.example.com/', { ignoreTokens: ['about'] }), ['https://about.example.com/page/home'])
+})
+
+test('discoverLinks: only a path segment equal to the journal code is ignored, not text inside a longer segment', () => {
+  // A journal coded "data": "/page/data-sharing" must still match "data-shar".
+  const html = `<a href="/journal/data/page/data-sharing">Read more</a><a href="/journal/data/issue/view/3">Volume 3</a>`
+  assert.deepEqual(
+    discoverLinks(html, 'https://example.com/journal/data/', { ignoreTokens: ['data'] }),
+    ['https://example.com/journal/data/page/data-sharing'],
+  )
+})
+
+test('discoverLinks: a keyword hit wholly inside the journal code is ignored wherever the code sits in the path', () => {
+  // "aim" is inside "aimed", including in an article slug that embeds the code.
+  const html = `<a href="/index.php/aimed/article/view/10-71423-aimed-20250802">A paper</a><a href="/index.php/aimed/page/ai-use-policy">AI use</a>`
+  assert.deepEqual(
+    discoverLinks(html, 'https://www.ai-press.org/index.php/aimed/', { ignoreTokens: ['aimed'] }),
+    ['https://www.ai-press.org/index.php/aimed/page/ai-use-policy'],
+  )
+})
+
+test('discoverLinks: a hit that runs past the journal code still counts', () => {
+  const html = `<a href="/journal/data/page/data-sharing">Read more</a>`
+  assert.equal(discoverLinks(html, 'https://example.com/', { ignoreTokens: ['data'] }).length, 1)
+})

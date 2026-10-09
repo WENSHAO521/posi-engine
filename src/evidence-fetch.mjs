@@ -173,7 +173,7 @@ export const MAX_BODY_BYTES = 5 * 1024 * 1024
  * @param {number} [opts.timeoutMs]
  * @param {string} [opts.userAgent]
  * @returns {Promise<{
- *   url: string, fetch_status: string, http_status: number|null,
+ *   url: string, final_url?: string, fetch_status: string, http_status: number|null,
  *   body: string|null, retrieved_at: string, error: string|null
  * }>}
  */
@@ -190,13 +190,16 @@ export async function fetchWithStatus(url, opts = {}) {
       signal: AbortSignal.timeout(timeoutMs),
     })
     const fetch_status = classifyHttpStatus(res.status)
+    // The URL after any redirects. Relative links in the body resolve against
+    // this, not against the URL that was asked for.
+    const final_url = res.url || url
     if (fetch_status !== 'ok') {
-      return { url, fetch_status, http_status: res.status, body: null, retrieved_at, error: null }
+      return { url, final_url, fetch_status, http_status: res.status, body: null, retrieved_at, error: null }
     }
 
     const declaredLength = Number(res.headers.get('content-length'))
     if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
-      return { url, fetch_status: 'parse_error', http_status: res.status, body: null, retrieved_at, error: `response body exceeds ${maxBodyBytes} bytes (Content-Length: ${declaredLength})` }
+      return { url, final_url, fetch_status: 'parse_error', http_status: res.status, body: null, retrieved_at, error: `response body exceeds ${maxBodyBytes} bytes (Content-Length: ${declaredLength})` }
     }
 
     try {
@@ -205,9 +208,9 @@ export async function fetchWithStatus(url, opts = {}) {
       // still cause an unbounded read; this enforces the cap regardless of
       // what the server claims.
       const body = await readBodyWithCap(res, maxBodyBytes)
-      return { url, fetch_status: 'ok', http_status: res.status, body, retrieved_at, error: null }
+      return { url, final_url, fetch_status: 'ok', http_status: res.status, body, retrieved_at, error: null }
     } catch (parseErr) {
-      return { url, fetch_status: 'parse_error', http_status: res.status, body: null, retrieved_at, error: String(parseErr?.message ?? parseErr) }
+      return { url, final_url, fetch_status: 'parse_error', http_status: res.status, body: null, retrieved_at, error: String(parseErr?.message ?? parseErr) }
     }
   } catch (err) {
     const fetch_status = classifyFetchException(err)
