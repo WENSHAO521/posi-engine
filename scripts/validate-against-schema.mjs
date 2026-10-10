@@ -51,6 +51,7 @@ const rankingSchema = JSON.parse(readFileSync(join(posiDataDir, 'schema/ranking.
 const validateJournal = ajv.compile(journalSchema)
 const validateMetric = ajv.compile(metricSchema)
 const validateRanking = ajv.compile(rankingSchema)
+const validatePcsEdition = ajv.compile(JSON.parse(readFileSync(join(posiDataDir, 'schema/pcs-edition.schema.json'), 'utf-8')))
 const validateCitationRecord = ajv.compile(JSON.parse(readFileSync(join(posiDataDir, 'schema/citation-ranking.schema.json'), 'utf-8')))
 
 let errors = 0
@@ -179,6 +180,28 @@ try {
     console.log(`Validated ${count} Citation Ranking records in ${f}`)
   }
 } catch (e) { errors++; console.log('INVALID Citation Ranking edition:', e.message) }
+
+// rankings/pcs-q/pcs-q-<year>.json[.gz]: the PCS editions, against pcs-edition.schema.json.
+try {
+  const dir = join(dataDir, 'rankings/pcs-q')
+  const editions = existsSync(dir) ? readdirSync(dir).filter(f => /^pcs-q-\d{4}\.json(\.gz)?$/.test(f)) : []
+  if (editions.length === 0) console.log('No PCS edition found in rankings/pcs-q')
+  for (const f of editions) {
+    const raw = readFileSync(join(dir, f))
+    const edition = JSON.parse((f.endsWith('.gz') ? gunzipSync(raw) : raw).toString('utf-8'))
+    if (!validatePcsEdition(edition)) {
+      // One line per distinct problem, not one per record: a bad field repeats across 158,000 records.
+      const seen = new Map()
+      for (const err of validatePcsEdition.errors) {
+        const key = `${err.instancePath.replace(/\/records\/\d+/, '/records/*')} ${err.message}`
+        seen.set(key, (seen.get(key) ?? 0) + 1)
+      }
+      errors++
+      for (const [key, n] of [...seen].slice(0, 20)) console.log(`INVALID PCS edition ${f}: ${key} (${n}x)`)
+    }
+    console.log(`Validated ${edition.records?.length ?? 0} PCS records in ${f}`)
+  }
+} catch (e) { errors++; console.log('INVALID PCS edition:', e.message) }
 
 console.log(errors === 0 ? '\nALL VALID' : `\n${errors} INVALID RECORDS`)
 process.exit(errors === 0 ? 0 : 1)
