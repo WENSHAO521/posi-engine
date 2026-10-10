@@ -167,9 +167,15 @@ try {
   for (const f of editions) {
     const raw = readFileSync(join(dir, f))
     const edition = JSON.parse((f.endsWith('.gz') ? gunzipSync(raw) : raw).toString('utf-8'))
+    // A missing or empty records array is an unusable edition, not an edition of zero records.
+    if (!Array.isArray(edition.records) || edition.records.length === 0) {
+      errors++
+      console.log(`INVALID Citation Ranking edition ${f}: records must be a non-empty array`)
+      continue
+    }
     let count = 0
     let invalid = 0
-    for (const rec of edition.records ?? []) {
+    for (const rec of edition.records) {
       count++
       if (!validateCitationRecord(rec)) {
         errors++
@@ -199,7 +205,7 @@ try {
       errors++
       for (const [key, n] of [...seen].slice(0, 20)) console.log(`INVALID PCS edition ${f}: ${key} (${n}x)`)
     }
-    console.log(`Validated ${edition.records?.length ?? 0} PCS records in ${f}`)
+    console.log(`Validated ${Array.isArray(edition.records) ? edition.records.length : 0} PCS records in ${f}`)
   }
 } catch (e) { errors++; console.log('INVALID PCS edition:', e.message) }
 
