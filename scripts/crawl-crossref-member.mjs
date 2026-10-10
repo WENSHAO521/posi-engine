@@ -17,9 +17,16 @@
  *   node scripts/crawl-crossref-member.mjs --member 311 --since 2018-01-01 \
  *     --registry posi-data/registry/journal-id-map.csv --out candidates.json [--min-issns 500]
  *
- * --since defaults to 120 days ago (the monthly run). A scan that reads fewer
- * than --min-issns ISSNs fails without writing, so a Crossref outage is not
- * mistaken for a month with no new journals.
+ * --since defaults to 120 days ago (the monthly run). --date-field says which
+ * Crossref date the window is on: `created` (when the DOI was first deposited;
+ * the default for the monthly run, so a journal that starts depositing a back
+ * catalogue is found when it does) or `pub` (publication date; the default
+ * when --since is given, for a historical pass over articles published since
+ * then). A scan that reads fewer than --min-issns ISSNs fails without writing,
+ * so a Crossref outage is not mistaken for a month with no new journals; so
+ * does a single day that still reaches the facet cap, and a DOAJ lookup that
+ * keeps failing (a journal is never recorded as subscription because DOAJ
+ * could not be reached).
  */
 import { readFileSync, writeFileSync } from 'fs'
 
@@ -39,7 +46,10 @@ if (!member || !registryFile || !outFile) {
   process.exit(2)
 }
 const TODAY = new Date().toISOString().slice(0, 10)
-const since = arg('since', new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10))
+const sinceArg = arg('since')
+const since = sinceArg ?? new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10)
+const dateField = arg('date-field', sinceArg ? 'pub' : 'created')
+if (!['pub', 'created'].includes(dateField)) { console.error('--date-field must be pub or created'); process.exit(2) }
 const minIssns = parseInt(arg('min-issns', '1'), 10)
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -62,18 +72,38 @@ async function getJson(url) {
   throw new Error(`${last.message} - ${url}`)
 }
 
-async function scan(from, until, found) {
-  const filter = `type:journal-article,from-pub-date:${from},until-pub-date:${until}`
+async function facetIssns(from, until, extra = '') {
+  const filter = `type:journal-article,from-${dateField}-date:${from},until-${dateField}-date:${until}${extra}`
   const msg = await getJson(`https://api.crossref.org/members/${member}/works?rows=0&facet=issn:*&filter=${filter}&mailto=${MAILTO}`)
-  const keys = Object.keys(msg?.facets?.issn?.values ?? {})
-  if (keys.length >= FACET_CAP && from !== until) {
+  return Object.keys(msg?.facets?.issn?.values ?? {})
+}
+
+let prefixes = null
+async function memberPrefixes() {
+  prefixes ??= ((await getJson(`https://api.crossref.org/members/${member}?mailto=${MAILTO}`))?.prefix ?? []).map(p => p.value)
+  return prefixes
+}
+
+// Crossref ISSNs look like https://id.crossref.org/issn/1234-5678
+const addKeys = (found, keys) => keys.forEach(k => found.add(k.slice(k.lastIndexOf('/') + 1)))
+
+async function scan(from, until, found) {
+  const keys = await facetIssns(from, until)
+  if (keys.length < FACET_CAP) return addKeys(found, keys)
+  if (from !== until) {
     const a = day(from), b = day(until)
     const mid = new Date(a.getTime() + Math.floor((b - a) / 2 / 864e5) * 864e5)
     await scan(from, iso(mid), found)
     await scan(iso(new Date(mid.getTime() + 864e5)), until, found)
     return
   }
-  for (const k of keys) found.add(k.slice(k.lastIndexOf('/') + 1)) // https://id.crossref.org/issn/1234-5678
+  // One day still reaches the facet cap: read it again per DOI prefix of the member. If a prefix alone
+  // still reaches the cap, stop rather than carry on with a list that is cut off without any sign of it.
+  for (const prefix of await memberPrefixes()) {
+    const part = await facetIssns(from, until, `,prefix:${prefix}`)
+    if (part.length >= FACET_CAP) throw new Error(`${from}, prefix ${prefix}: ${part.length} ISSNs reach the facet cap; the list would be incomplete`)
+    addKeys(found, part)
+  }
 }
 
 // ISSNs the registry already knows, as an ISSN-L or as one half of a pair.
@@ -84,7 +114,7 @@ for (const line of readFileSync(registryFile, 'utf8').trim().split('\n').slice(1
   else if (type === 'issn_pair') value.split('/').forEach(v => known.add(v))
 }
 
-console.error(`Crossref member ${member}: scanning ${since} to ${TODAY}`)
+console.error(`Crossref member ${member}: scanning ${since} to ${TODAY} by ${dateField} date`)
 const found = new Set()
 const end = day(TODAY)
 for (let d = day(since); d <= end; ) {
@@ -117,14 +147,28 @@ for (const issn of todo) {
   await sleep(100)
 }
 
+// A DOAJ batch that cannot be read is retried and then fails the run: treating it as "not listed" would
+// record open access journals as subscription journals.
+async function doajBatch(issnBatch) {
+  const q = issnBatch.map(x => `issn:"${x}"`).join(' OR ')
+  let last
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const res = await fetch(`https://doaj.org/api/search/journals/${encodeURIComponent(q)}?pageSize=100`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(60000) })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return (await res.json()).results ?? []
+    } catch (e) {
+      last = e
+      await sleep(3000 * (attempt + 1))
+    }
+  }
+  throw new Error(`DOAJ lookup failed (${last.message}) for ${issnBatch.slice(0, 3).join(', ')}...`)
+}
+
 const listed = new Set()
 const issns = candidates.flatMap(c => c.ISSN)
 for (let i = 0; i < issns.length; i += 40) {
-  const q = issns.slice(i, i + 40).map(x => `issn:"${x}"`).join(' OR ')
-  try {
-    const res = await fetch(`https://doaj.org/api/search/journals/${encodeURIComponent(q)}?pageSize=100`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(60000) })
-    if (res.ok) for (const j of (await res.json()).results ?? []) for (const x of [j.bibjson?.eissn, j.bibjson?.pissn]) if (x) listed.add(x)
-  } catch { /* left as not listed; a later DOAJ sync corrects it */ }
+  for (const j of await doajBatch(issns.slice(i, i + 40))) for (const x of [j.bibjson?.eissn, j.bibjson?.pissn]) if (x) listed.add(x)
   await sleep(400)
 }
 for (const c of candidates) c.doaj = c.ISSN.some(x => listed.has(x))
