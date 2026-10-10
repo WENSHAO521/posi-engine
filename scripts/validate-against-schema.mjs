@@ -25,7 +25,8 @@
  */
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
-import { readFileSync, readdirSync } from 'fs'
+import { readFileSync, readdirSync, existsSync } from 'fs'
+import { gunzipSync } from 'zlib'
 import { join } from 'path'
 import { titleKey, alternateTitleText } from '../src/global-index.mjs'
 
@@ -50,6 +51,7 @@ const rankingSchema = JSON.parse(readFileSync(join(posiDataDir, 'schema/ranking.
 const validateJournal = ajv.compile(journalSchema)
 const validateMetric = ajv.compile(metricSchema)
 const validateRanking = ajv.compile(rankingSchema)
+const validateCitationRecord = ajv.compile(JSON.parse(readFileSync(join(posiDataDir, 'schema/citation-ranking.schema.json'), 'utf-8')))
 
 let errors = 0
 
@@ -153,6 +155,30 @@ try {
   }
   console.log(`Validated ${count} ranking records`)
 } catch (e) { console.log('rankings check skipped:', e.message) }
+
+// rankings/citation/citation-ranking-<year>.json[.gz]: the POSI Citation Ranking editions
+// ({ ...edition fields, records: [...] }), each record against citation-ranking.schema.json.
+// (The per-journal ranking check above only reads plain .json arrays, so it never sees these.)
+try {
+  const dir = join(dataDir, 'rankings/citation')
+  const editions = existsSync(dir) ? readdirSync(dir).filter(f => /^citation-ranking-\d{4}\.json(\.gz)?$/.test(f)) : []
+  if (editions.length === 0) console.log('No Citation Ranking edition found in rankings/citation')
+  for (const f of editions) {
+    const raw = readFileSync(join(dir, f))
+    const edition = JSON.parse((f.endsWith('.gz') ? gunzipSync(raw) : raw).toString('utf-8'))
+    let count = 0
+    let invalid = 0
+    for (const rec of edition.records ?? []) {
+      count++
+      if (!validateCitationRecord(rec)) {
+        errors++
+        if (++invalid <= 20) console.log(`INVALID citation ranking record ${rec.journal_id} in ${f}:`, JSON.stringify(validateCitationRecord.errors))
+      }
+    }
+    if (invalid > 20) console.log(`... and ${invalid - 20} more invalid records in ${f}`)
+    console.log(`Validated ${count} Citation Ranking records in ${f}`)
+  }
+} catch (e) { errors++; console.log('INVALID Citation Ranking edition:', e.message) }
 
 console.log(errors === 0 ? '\nALL VALID' : `\n${errors} INVALID RECORDS`)
 process.exit(errors === 0 ? 0 : 1)
