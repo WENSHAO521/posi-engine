@@ -18,15 +18,16 @@
  *     --registry posi-data/registry/journal-id-map.csv --out candidates.json [--min-issns 500]
  *
  * --since defaults to 120 days ago (the monthly run). --date-field says which
- * Crossref date the window is on: `created` (when the DOI was first deposited;
- * the default for the monthly run, so a journal that starts depositing a back
- * catalogue is found when it does) or `pub` (publication date; the default
- * when --since is given, for a historical pass over articles published since
- * then). A scan that reads fewer than --min-issns ISSNs fails without writing,
- * so a Crossref outage is not mistaken for a month with no new journals; so
- * does a single day that still reaches the facet cap, and a DOAJ lookup that
- * keeps failing (a journal is never recorded as subscription because DOAJ
- * could not be reached).
+ * Crossref dates the window is on, as a comma-separated list whose results are
+ * combined: `deposit` (when the member last deposited the DOI's metadata; finds
+ * a DOI that is new, transferred to the member or has gained its ISSN), `created`
+ * (first deposit), `pub` (publication date). The default is `deposit,pub` for the
+ * monthly run and `pub` when --since is given (a historical pass over articles
+ * published since then). A scan that reads fewer than --min-issns ISSNs fails
+ * without writing, so a Crossref outage is not mistaken for a month with no new
+ * journals; so does a day that reaches the facet cap even when read per DOI
+ * prefix, and a DOAJ lookup that keeps failing (a journal is never recorded as
+ * subscription because DOAJ could not be reached).
  */
 import { readFileSync, writeFileSync } from 'fs'
 
@@ -48,8 +49,9 @@ if (!member || !registryFile || !outFile) {
 const TODAY = new Date().toISOString().slice(0, 10)
 const sinceArg = arg('since')
 const since = sinceArg ?? new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10)
-const dateField = arg('date-field', sinceArg ? 'pub' : 'created')
-if (!['pub', 'created'].includes(dateField)) { console.error('--date-field must be pub or created'); process.exit(2) }
+// Crossref dates the window can be on, as a comma-separated list whose results are combined.
+const dateFields = arg('date-field', sinceArg ? 'pub' : 'deposit,pub').split(',')
+if (!dateFields.every(f => ['pub', 'created', 'deposit'].includes(f))) { console.error('--date-field must be a list of pub, created, deposit'); process.exit(2) }
 const minIssns = parseInt(arg('min-issns', '1'), 10)
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -72,7 +74,7 @@ async function getJson(url) {
   throw new Error(`${last.message} - ${url}`)
 }
 
-async function facetIssns(from, until, extra = '') {
+async function facetIssns(dateField, from, until, extra = '') {
   const filter = `type:journal-article,from-${dateField}-date:${from},until-${dateField}-date:${until}${extra}`
   const msg = await getJson(`https://api.crossref.org/members/${member}/works?rows=0&facet=issn:*&filter=${filter}&mailto=${MAILTO}`)
   return Object.keys(msg?.facets?.issn?.values ?? {})
@@ -87,20 +89,20 @@ async function memberPrefixes() {
 // Crossref ISSNs look like https://id.crossref.org/issn/1234-5678
 const addKeys = (found, keys) => keys.forEach(k => found.add(k.slice(k.lastIndexOf('/') + 1)))
 
-async function scan(from, until, found) {
-  const keys = await facetIssns(from, until)
+async function scan(dateField, from, until, found) {
+  const keys = await facetIssns(dateField, from, until)
   if (keys.length < FACET_CAP) return addKeys(found, keys)
   if (from !== until) {
     const a = day(from), b = day(until)
     const mid = new Date(a.getTime() + Math.floor((b - a) / 2 / 864e5) * 864e5)
-    await scan(from, iso(mid), found)
-    await scan(iso(new Date(mid.getTime() + 864e5)), until, found)
+    await scan(dateField, from, iso(mid), found)
+    await scan(dateField, iso(new Date(mid.getTime() + 864e5)), until, found)
     return
   }
   // One day still reaches the facet cap: read it again per DOI prefix of the member. If a prefix alone
   // still reaches the cap, stop rather than carry on with a list that is cut off without any sign of it.
   for (const prefix of await memberPrefixes()) {
-    const part = await facetIssns(from, until, `,prefix:${prefix}`)
+    const part = await facetIssns(dateField, from, until, `,prefix:${prefix}`)
     if (part.length >= FACET_CAP) throw new Error(`${from}, prefix ${prefix}: ${part.length} ISSNs reach the facet cap; the list would be incomplete`)
     addKeys(found, part)
   }
@@ -114,13 +116,13 @@ for (const line of readFileSync(registryFile, 'utf8').trim().split('\n').slice(1
   else if (type === 'issn_pair') value.split('/').forEach(v => known.add(v))
 }
 
-console.error(`Crossref member ${member}: scanning ${since} to ${TODAY} by ${dateField} date`)
+console.error(`Crossref member ${member}: scanning ${since} to ${TODAY} by ${dateFields.join(' + ')} date`)
 const found = new Set()
 const end = day(TODAY)
 for (let d = day(since); d <= end; ) {
   const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))
   const last = new Date(Math.min(next - 864e5, end))
-  await scan(iso(d), iso(last), found)
+  for (const f of dateFields) await scan(f, iso(d), iso(last), found)
   console.error(`  to ${iso(last)}: ${found.size} ISSNs`)
   d = next
 }
