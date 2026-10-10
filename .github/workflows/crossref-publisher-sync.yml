@@ -1,0 +1,156 @@
+name: Crossref publisher sync
+
+# Adds a publisher's journals that posi-data does not have yet. For Crossref
+# member 311 (Wiley):
+#   1. scripts/crawl-crossref-member.mjs lists the member's journals from
+#      Crossref, leaving out every ISSN already in posi-data's registry;
+#   2. posi-data/scripts/ingest-crossref-publisher.mjs mints POSI-J ids for
+#      them (registry/journal-id-map.csv) and writes the discovered records
+#      (journals/discovered/<publisher>-expansion-<YYYY-MM>.jsonl) and an audit
+#      directory;
+#   3. the result goes to a pull request on posi-data, branch
+#      crossref-<publisher>/<YYYY-MM>, for review. Nothing changes until it merges.
+# It only adds journals; an existing record is never changed.
+#
+# Schedule: the 3rd of each month. A manual run can set an earlier start date
+# (2018-01-01 for a full pass) or a different member.
+#
+# Needs the POSI_DATA_TOKEN secret, as ajr-rerate.yml does.
+# A failed run opens an issue here (scripts/global/alert.sh).
+
+on:
+  schedule:
+    - cron: '43 6 3 * *'
+  workflow_dispatch:
+    inputs:
+      member:
+        description: 'Crossref member id'
+        required: false
+        default: '311'
+      publisher:
+        description: 'Short name used in file and branch names'
+        required: false
+        default: 'wiley'
+      match:
+        description: 'Regex for the Crossref publisher names that count as this publisher'
+        required: false
+        default: 'wiley'
+      site:
+        description: 'Journal home page, with {issn} (hyphen removed)'
+        required: false
+        default: 'https://onlinelibrary.wiley.com/journal/{issn}'
+      since:
+        description: 'Scan start (YYYY-MM-DD); empty = last 120 days'
+        required: false
+        default: ''
+
+concurrency:
+  group: crossref-publisher-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ALERT_TITLE: 'Crossref publisher sync: run needs attention'
+      # Inputs reach the shell only as variables, never inside the script text.
+      MEMBER: ${{ inputs.member || '311' }}
+      PUBLISHER: ${{ inputs.publisher || 'wiley' }}
+      MATCH: ${{ inputs.match || 'wiley' }}
+      SITE: ${{ inputs.site || 'https://onlinelibrary.wiley.com/journal/{issn}' }}
+      SINCE: ${{ inputs.since }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check the inputs and the posi-data token
+        env:
+          POSI_DATA_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
+        run: |
+          [[ "$MEMBER" =~ ^[0-9]+$ ]] || { echo "::error::member must be a number"; exit 1; }
+          [[ "$PUBLISHER" =~ ^[a-z0-9-]+$ ]] || { echo "::error::publisher must be lower-case letters, digits and hyphens"; exit 1; }
+          if [ -n "$SINCE" ] && ! [[ "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "::error::since must be YYYY-MM-DD"; exit 1
+          fi
+          if [ -z "$POSI_DATA_TOKEN" ]; then
+            echo "::error::The POSI_DATA_TOKEN secret is not set (see the header of this workflow)"; exit 1
+          fi
+
+      - name: Check out posi-data
+        uses: actions/checkout@v4
+        with:
+          repository: WENSHAO521/posi-data
+          path: posi-data
+          token: ${{ secrets.POSI_DATA_TOKEN }}
+
+      # A scan that reads fewer than 500 ISSNs fails here and writes nothing.
+      - name: List the journals from Crossref
+        run: |
+          set -euo pipefail
+          SINCE_ARG=()
+          [ -n "$SINCE" ] && SINCE_ARG=(--since "$SINCE")
+          node scripts/crawl-crossref-member.mjs --member "$MEMBER" --min-issns 500 "${SINCE_ARG[@]}" \
+            --registry posi-data/registry/journal-id-map.csv --out candidates.json
+
+      - name: Mint ids and write the records
+        run: |
+          set -euo pipefail
+          MONTH=$(date -u +%Y-%m)
+          AUDIT="posi-data/audits/migrations/$PUBLISHER-crossref-$MONTH"
+          mkdir -p "$AUDIT"
+          cp candidates.json "$AUDIT/crossref-member-$MEMBER-candidates.json"
+          node posi-data/scripts/ingest-crossref-publisher.mjs --engine . --data posi-data \
+            --candidates "$AUDIT/crossref-member-$MEMBER-candidates.json" --member "$MEMBER" \
+            --retrieved "$(date -u +%Y-%m-%d)" --out "$PUBLISHER-expansion-$MONTH" \
+            --audit-dir "$AUDIT" --site "$SITE" --match "$MATCH" | tee ingest-summary.json
+
+      - name: Validate the records
+        run: |
+          npm ci
+          node scripts/validate-against-schema.mjs posi-data
+
+      - name: Open a pull request on posi-data
+        env:
+          GH_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
+        working-directory: posi-data
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Nothing changed"; exit 0
+          fi
+          MONTH=$(date -u +%Y-%m)
+          BRANCH="crossref-$PUBLISHER/$MONTH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add registry/journal-id-map.csv journals/discovered audits/migrations
+          git commit -m "Add $PUBLISHER journals from Crossref member $MEMBER ($MONTH)"
+          git push --force origin "$BRANCH"
+          {
+            echo "Journals of Crossref member $MEMBER that posi-data did not have, from posi-engine's [crossref-publisher-sync workflow]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            echo
+            echo '```json'
+            cat ../ingest-summary.json
+            echo '```'
+            echo
+            echo "New ids are in registry/journal-id-map.csv (issn_pair tier); the records are in journals/discovered/$PUBLISHER-expansion-$MONTH.jsonl; counts and the id list are in audits/migrations/$PUBLISHER-crossref-$MONTH."
+          } > ../pr-body.md
+          if [ "$(gh pr list --head "$BRANCH" --state open --json number -q length)" = "0" ]; then
+            gh pr create --head "$BRANCH" --base "$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)" \
+              --title "Add $PUBLISHER journals from Crossref ($MONTH)" --body-file ../pr-body.md
+          else
+            gh pr edit "$BRANCH" --body-file ../pr-body.md
+          fi
+
+      - name: Alert on failure
+        if: failure()
+        run: scripts/global/alert.sh "The Crossref publisher sync failed."
