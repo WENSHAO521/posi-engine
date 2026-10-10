@@ -31,6 +31,7 @@ import { resolve, join } from 'path'
 import { fetchWithStatus } from '../src/evidence-fetch.mjs'
 import { decideWebsiteUrl, liveness, publisherRewrites, parseWikidataSites, pageMentionsTitle } from '../src/website-url.mjs'
 import { classifyLifecycle } from '../src/lifecycle.mjs'
+import { withoutWithdrawn } from '../src/withdrawn.mjs'
 
 const OPENALEX = 'https://api.openalex.org'
 const MAILTO = 'posi@panorama-sg.com'
@@ -106,6 +107,8 @@ async function main() {
   let targets = process.argv.includes('--only-rateable')
     ? corpus.filter(j => ['early_stage', 'mature'].includes(classifyLifecycle(j.early_stage_rating?.first_published ?? null, today).lifecycle_stage))
     : corpus
+  // Withdrawn journals are not checked, but stay in the corpus that is written back.
+  targets = withoutWithdrawn(targets, 'website check')
   if (arg('limit')) targets = targets.slice(0, Number(arg('limit')))
   const concurrency = Number(arg('concurrency', '8'))
   if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error(`--concurrency must be a positive integer, got ${arg('concurrency')}`)
