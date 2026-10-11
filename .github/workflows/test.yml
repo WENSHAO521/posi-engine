@@ -41,6 +41,7 @@ jobs:
             scripts
             screening
             registry
+            audits/data-quality/issn-integrity
 
       - name: Validate posi-data
         run: node scripts/validate-against-schema.mjs posi-data
