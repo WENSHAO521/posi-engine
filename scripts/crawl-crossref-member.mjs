@@ -167,13 +167,13 @@ async function doajBatch(issnBatch) {
   throw new Error(`DOAJ lookup failed (${last.message}) for ${issnBatch.slice(0, 3).join(', ')}...`)
 }
 
-const listed = new Set()
+const listed = new Map() // ISSN -> DOAJ journal id
 const issns = candidates.flatMap(c => c.ISSN)
 for (let i = 0; i < issns.length; i += 40) {
-  for (const j of await doajBatch(issns.slice(i, i + 40))) for (const x of [j.bibjson?.eissn, j.bibjson?.pissn]) if (x) listed.add(x)
+  for (const j of await doajBatch(issns.slice(i, i + 40))) for (const x of [j.bibjson?.eissn, j.bibjson?.pissn]) if (x) listed.set(x, j.id)
   await sleep(400)
 }
-for (const c of candidates) c.doaj = c.ISSN.some(x => listed.has(x))
+for (const c of candidates) c.doaj = c.ISSN.map(x => listed.get(x)).find(Boolean) ?? false
 
 writeFileSync(outFile, JSON.stringify(candidates))
 console.log(`${candidates.length} candidate journals (${candidates.filter(c => c.doaj).length} in DOAJ) -> ${outFile}`)
