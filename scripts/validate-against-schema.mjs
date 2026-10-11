@@ -209,5 +209,41 @@ try {
   }
 } catch (e) { errors++; console.log('INVALID PCS edition:', e.message) }
 
+// screening/discovered-screening.jsonl: the screening data of discovered journals, against
+// schema/screening.schema.json, with every posi_id a journal record and every journal_code unique.
+// Skipped while posi-data has no such schema.
+try {
+  const schemaFile = join(posiDataDir, 'schema/screening.schema.json')
+  const dataFile = join(posiDataDir, 'screening/discovered-screening.jsonl')
+  if (existsSync(schemaFile) && existsSync(dataFile)) {
+    const validateScreening = ajv.compile(JSON.parse(readFileSync(schemaFile, 'utf-8')))
+    const knownIds = new Set()
+    const collect = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name)
+        if (e.isDirectory()) collect(p)
+        else if (e.name.endsWith('.json')) knownIds.add(JSON.parse(readFileSync(p, 'utf-8')).id)
+      }
+    }
+    collect(join(posiDataDir, 'journals/core'))
+    for (const f of readdirSync(join(posiDataDir, 'journals/discovered')).filter(f => f.endsWith('.jsonl'))) {
+      for (const line of readFileSync(join(posiDataDir, 'journals/discovered', f), 'utf-8').split('\n')) if (line.trim()) knownIds.add(JSON.parse(line).id)
+    }
+    const ids = new Set(), codes = new Set()
+    let count = 0
+    for (const line of readFileSync(dataFile, 'utf-8').split('\n')) {
+      if (!line.trim()) continue
+      const obj = JSON.parse(line)
+      count++
+      if (!validateScreening(obj)) { errors++; console.log(`INVALID screening ${obj.posi_id}:`, JSON.stringify(validateScreening.errors)); continue }
+      if (!knownIds.has(obj.posi_id)) { errors++; console.log(`INVALID screening ${obj.posi_id}: no journal record has this id`) }
+      if (ids.has(obj.posi_id)) { errors++; console.log(`INVALID screening ${obj.posi_id}: listed twice`) }
+      if (codes.has(obj.journal_code)) { errors++; console.log(`INVALID screening ${obj.posi_id}: journal_code ${obj.journal_code} is already used`) }
+      ids.add(obj.posi_id); codes.add(obj.journal_code)
+    }
+    console.log(`Validated ${count} screening records`)
+  }
+} catch (e) { errors++; console.log('INVALID screening:', e.message) }
+
 console.log(errors === 0 ? '\nALL VALID' : `\n${errors} INVALID RECORDS`)
 process.exit(errors === 0 ? 0 : 1)
