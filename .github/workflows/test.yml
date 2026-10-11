@@ -38,6 +38,13 @@ jobs:
             journals
             metrics
             rankings
+            scripts
+            screening
+            registry
 
       - name: Validate posi-data
         run: node scripts/validate-against-schema.mjs posi-data
+
+      # Export posi-data's discovered journals, change some, and apply them back (on a copy).
+      - name: Directory sync round trip
+        run: POSI_DATA_DIR=posi-data node --test test/directory-roundtrip.test.mjs
