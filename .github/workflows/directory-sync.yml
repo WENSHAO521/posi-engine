@@ -1,0 +1,163 @@
+name: Directory sync
+
+# Keeps the discovered-journal directory (about 25,000 journals) current. This job used to run in the
+# website repository, which wrote the records into its own source; the website is now a front end, so the
+# records live in posi-data and this job maintains them.
+#
+# Steps (the scripts are in scripts/directory/, moved unchanged from the website repository):
+#   1. export the discovered journals of posi-data as site-shaped records (export-site-records.mjs);
+#   2. discover new journals (DOAJ + OpenAlex), or with full_doaj the twice-monthly full DOAJ sync;
+#      normalise country codes, fill missing publishers from Crossref, recompute metadata quality scores,
+#      and update the auto-PQF scores (new journals first, then the oldest, within a time budget);
+#   3. apply the changes to posi-data (apply-site-records.mjs): screening fields replaced, empty
+#      descriptive fields filled, new journals minted through the registry, nothing deleted, and a
+#      different title or ISSN only proposed (proposed-changes.csv);
+#   4. open (or update) one pull request on posi-data, branch directory-sync, for review before the
+#      site reads it.
+#
+# Needs the secrets POSI_DATA_TOKEN (push branches and open pull requests on WENSHAO521/posi-data;
+# contents + pull requests write) and DOAJ_API_KEY (optional, a premium DOAJ key for fresher data).
+# A failed run opens an issue here (scripts/global/alert.sh).
+#
+# Schedule: off. Run it by hand (workflow_dispatch) until a run has been checked, then uncomment the
+# schedule; the old workflows in the website repository (Daily Journal Sync, DOAJ Journal Sync) are
+# removed when this one is on.
+
+on:
+  # schedule:
+  #   - cron: '17 2 * * *'     # daily 02:17 UTC, as the website's Daily Journal Sync ran
+  workflow_dispatch:
+    inputs:
+      full_doaj:
+        description: 'Run the full DOAJ sync (sync-doaj.mjs) instead of discovering new journals'
+        type: boolean
+        default: false
+      limit:
+        description: 'New journals to discover (daily run)'
+        required: false
+        default: '100'
+      pqf_minutes:
+        description: 'Minutes for the auto-PQF step'
+        required: false
+        default: '20'
+
+concurrency:
+  group: directory-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write     # alerts
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ALERT_TITLE: 'Directory sync: run needs attention'
+      POSI_DISCOVERED_FILE: ${{ github.workspace }}/work/discovered-journals.json
+      POSI_CORE_FILE: ${{ github.workspace }}/posi-data/corpus/core-collection.json
+      DOAJ_API_KEY: ${{ secrets.DOAJ_API_KEY }}
+      LIMIT: ${{ inputs.limit }}
+      PQF_MINUTES: ${{ inputs.pqf_minutes }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check the inputs and the posi-data token
+        env:
+          POSI_DATA_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
+        run: |
+          [[ "${LIMIT:-100}" =~ ^[0-9]+$ ]] || { echo "::error::limit must be a number"; exit 1; }
+          [[ "${PQF_MINUTES:-20}" =~ ^[0-9]+$ ]] || { echo "::error::pqf_minutes must be a number"; exit 1; }
+          if [ -z "$POSI_DATA_TOKEN" ]; then
+            echo "::error::The POSI_DATA_TOKEN secret is not set (see the header of this workflow)"; exit 1
+          fi
+
+      - name: Check out posi-data
+        uses: actions/checkout@v4
+        with:
+          repository: WENSHAO521/posi-data
+          path: posi-data
+          token: ${{ secrets.POSI_DATA_TOKEN }}
+
+      - name: Export the discovered journals
+        run: |
+          set -euo pipefail
+          node scripts/directory/export-site-records.mjs --data posi-data --out work/baseline.json
+          cp work/baseline.json work/discovered-journals.json
+
+      - name: Discover new journals (DOAJ + OpenAlex)
+        if: inputs.full_doaj != true
+        run: node scripts/directory/discover-journals.mjs --openalex-doaj --write --limit "${LIMIT:-100}"
+
+      - name: Sync with the full DOAJ journal list
+        if: inputs.full_doaj == true
+        run: node scripts/directory/sync-doaj.mjs --write
+
+      - name: Normalize country codes
+        run: node scripts/directory/normalize-countries.mjs --write
+
+      - name: Fill missing publishers from Crossref
+        run: node scripts/directory/enrich-publishers.mjs --write --budget-minutes 12
+
+      - name: Recalculate metadata quality scores
+        run: node scripts/directory/calc-discovered-mqs.mjs
+
+      - name: Update auto-PQF scores
+        run: node scripts/directory/auto-pqf.mjs --write --budget-minutes "${PQF_MINUTES:-20}"
+
+      - name: Apply the changes to posi-data
+        run: |
+          set -euo pipefail
+          node scripts/directory/apply-site-records.mjs --data posi-data \
+            --baseline work/baseline.json --records work/discovered-journals.json --report-dir work/apply-report | tee work/apply-summary.json
+          if [ -f work/apply-report/summary.json ]; then { echo '```json'; cat work/apply-report/summary.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Validate posi-data
+        run: node scripts/validate-against-schema.mjs posi-data
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: directory-sync-report
+          path: |
+            work/apply-report
+            work/apply-summary.json
+          if-no-files-found: ignore
+
+      - name: Open a pull request on posi-data
+        env:
+          GH_TOKEN: ${{ secrets.POSI_DATA_TOKEN }}
+        working-directory: posi-data
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then echo "Nothing changed"; exit 0; fi
+          BRANCH=directory-sync
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add -A journals screening registry audits
+          git commit -m "Directory sync $(date -u +%Y-%m-%d)"
+          git push --force origin "$BRANCH"
+          {
+            echo "Directory sync from posi-engine's [directory-sync workflow]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            echo
+            echo '```json'; cat ../work/apply-report/summary.json; echo; echo '```'
+            echo
+            echo "Different titles or ISSNs found are only proposed: the run's directory-sync-report artifact has proposed-changes.csv. Journals held for review are in audits/migrations/directory-sync-*/review.json."
+          } > ../pr-body.md
+          if [ "$(gh pr list --head "$BRANCH" --state open --json number -q length)" = "0" ]; then
+            gh pr create --head "$BRANCH" --base "$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)" \
+              --title "Directory sync" --body-file ../pr-body.md
+          else
+            gh pr edit "$BRANCH" --body-file ../pr-body.md
+          fi
+
+      - name: Alert on failure
+        if: failure()
+        run: scripts/global/alert.sh "The directory sync failed."
