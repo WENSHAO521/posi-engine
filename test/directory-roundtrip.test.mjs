@@ -55,3 +55,16 @@ test('screening changes are written, a changed title is only proposed, a new jou
   const again = await applyRecords({ data: dir, baseline: after, records: structuredClone(after) })
   assert.equal(again.screening_updated + again.minted + again.new_screening, 0)
 })
+
+test('a country stored as a non-ISO code is replaced by the ISO code of the name the scripts worked out', { skip: !ok, timeout: 120000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'posi-data-'))
+  for (const d of ['scripts', 'journals', 'screening', 'registry', 'schema']) cpSync(join(src, d), join(dir, d), { recursive: true })
+  const baseline = await exportSiteRecords(dir)
+  const i = baseline.findIndex((r) => r.country === 'TU')
+  if (i < 0) return   // posi-data no longer holds any such code
+  const records = structuredClone(baseline)
+  records[i].country = 'Turkey'
+  const s = await applyRecords({ data: dir, baseline, records })
+  assert.equal(s.filled, 1)
+  assert.equal((await exportSiteRecords(dir))[i].country, 'Turkey')
+})

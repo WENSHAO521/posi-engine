@@ -33,7 +33,8 @@ const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 const empty = (v) => v === null || v === undefined || v === ''
 
 const nameToIso = new Map()
-for (const a of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') for (const b of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') { const n = isoToCountry(a + b); if (n && n !== a + b) nameToIso.set(n, a + b) }
+const validIso = new Set()
+for (const a of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') for (const b of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') { const n = isoToCountry(a + b); if (n && n !== a + b) { nameToIso.set(n, a + b); validIso.add(a + b) } }
 
 export async function applyRecords({ data, baseline, records, reportDir, today = new Date().toISOString().slice(0, 10), engine = ENGINE }) {
   data = resolve(data)
@@ -55,7 +56,9 @@ export async function applyRecords({ data, baseline, records, reportDir, today =
     for (const f of SCREEN_FIELDS) if (!same(r[f], b[f]) && !same(r[f], s[f])) { s[f] = r[f] ?? null; touched = true }
     if (touched) summary.screening_updated++
     const fill = {}
-    if (!same(r.country, b.country) && empty(b.country) && nameToIso.get(r.country)) fill.country = nameToIso.get(r.country)
+    // Empty, or not a country at all (the record holds a MARC or other non-ISO code such as "TU", exported as is):
+    // the country the scripts worked out replaces it, as an ISO code.
+    if (!same(r.country, b.country) && (empty(b.country) || !nameToIso.has(b.country)) && nameToIso.get(r.country)) fill.country = nameToIso.get(r.country)
     if (!same(r.publisher, b.publisher) && empty(b.publisher) && r.publisher) fill.publisher = r.publisher
     if (!same(r.website_url, b.website_url) && empty(b.website_url) && r.website_url) fill.website_url = r.website_url
     if (!same(r.open_access, b.open_access) && b.open_access == null && typeof r.open_access === 'boolean') fill.open_access = r.open_access
@@ -78,6 +81,7 @@ export async function applyRecords({ data, baseline, records, reportDir, today =
         let t = false
         for (const [k, v] of Object.entries(x.fill)) {
           if (k === 'openalex_source_id') { if (empty(j.identifiers.openalex_source_id)) { j.identifiers.openalex_source_id = v; t = true } }
+          else if (k === 'country') { if (empty(j.country) || !validIso.has(j.country)) { j.country = v; t = true } }
           else if (empty(j[k]) && (k !== 'open_access' || j[k] == null)) { j[k] = v; t = true }
         }
         if (!t) return line
