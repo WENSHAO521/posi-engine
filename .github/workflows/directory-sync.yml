@@ -119,7 +119,9 @@ jobs:
           if [ -f work/apply-report/summary.json ]; then { echo '```json'; cat work/apply-report/summary.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
 
       - name: Validate posi-data
-        run: node scripts/validate-against-schema.mjs posi-data
+        run: |
+          npm ci
+          node scripts/validate-against-schema.mjs posi-data
 
       - uses: actions/upload-artifact@v4
         if: always()
