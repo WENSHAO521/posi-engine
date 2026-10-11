@@ -19,7 +19,7 @@
 import { readFileSync, writeFileSync } from 'fs'
 import { arg } from './lib.mjs'
 import { readJsonl } from './lib.mjs'
-import { buildGlobalCorpus, normIssn, titleMismatches } from '../../src/global-index.mjs'
+import { buildGlobalCorpus, linkOpenAlexSource, normIssn, titleMismatches } from '../../src/global-index.mjs'
 
 const all = name => { const o = []; for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === `--${name}`) o.push(process.argv[i + 1]); return o }
 const out = arg('out')
@@ -43,7 +43,7 @@ if (issnMapFile) {
   for (const r of corpus) {
     if (r.openalex_source_id) continue
     const hit = [r.issn_l, ...(r.issns ?? [])].filter(Boolean).map(x => issnMap[String(x).toUpperCase()]).find(Boolean)
-    if (hit) { r.openalex_source_id = hit[0]; r.openalex_source_type = hit[1]; linked++ }
+    if (hit) { linkOpenAlexSource(r, hit); linked++ }
   }
 }
 writeFileSync(out, JSON.stringify(corpus))

@@ -91,6 +91,21 @@ function alternates(title, titles) {
 }
 
 /**
+ * Link a Crossref-only corpus record to the OpenAlex source that holds its ISSN but is not typed as a journal
+ * (conference series, book series, ...), from an entry of harvest-openalex-snapshot.mjs's --issn-map:
+ * [id, type, works_count, is_oa, is_in_doaj]. The record keeps no open access status of its own, so it takes the
+ * source's; an entry written before the flags were added ([id, type, works_count]) leaves it unknown.
+ * @param {{ open_access?: boolean|null, in_doaj?: boolean|null }} rec
+ * @param {(string|number|boolean|null)[]} hit
+ */
+export function linkOpenAlexSource(rec, hit) {
+  rec.openalex_source_id = hit[0]
+  rec.openalex_source_type = hit[1]
+  if (rec.open_access == null && typeof hit[3] === 'boolean') rec.open_access = hit[3]
+  if (rec.in_doaj == null && typeof hit[4] === 'boolean') rec.in_doaj = hit[4]
+}
+
+/**
  * Merge harvested records into one corpus.
  * @param {ReturnType<typeof fromOpenAlexSource>[]} openalex
  * @param {ReturnType<typeof fromCrossrefJournal>[]} crossref

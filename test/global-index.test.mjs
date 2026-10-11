@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normIssn, fromOpenAlexSource, fromCrossrefJournal, buildGlobalCorpus, titleKey, titleMismatches } from '../src/global-index.mjs'
+import { normIssn, fromOpenAlexSource, fromCrossrefJournal, buildGlobalCorpus, linkOpenAlexSource, titleKey, titleMismatches } from '../src/global-index.mjs'
 
 const oaSource = (over = {}) => ({
   id: 'https://openalex.org/S1', display_name: 'Journal A', host_organization_name: 'Pub A',
@@ -146,4 +146,17 @@ test('a curated journal that is not withdrawn is still kept; a null or core stat
     assert.equal(out.length, 1, String(collection_status))
     assert.equal(out[0].posi_id, 'POSI-J-000042')
   }
+})
+
+test('a Crossref-only journal linked to a non-journal OpenAlex source takes its open access flags', () => {
+  const rec = { open_access: null, in_doaj: null }
+  linkOpenAlexSource(rec, ['S1', 'conference', 582, true, false])
+  assert.deepEqual(rec, { open_access: true, in_doaj: false, openalex_source_id: 'S1', openalex_source_type: 'conference' })
+})
+
+test('a link from an ISSN map written before the flags existed leaves open access unknown', () => {
+  const rec = { open_access: null, in_doaj: null }
+  linkOpenAlexSource(rec, ['S1', 'book series', 10])
+  assert.equal(rec.open_access, null)
+  assert.equal(rec.in_doaj, null)
 })
