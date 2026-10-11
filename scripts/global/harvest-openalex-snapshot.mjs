@@ -11,7 +11,7 @@
  * --profiles writes one compact profile per journal for the journal pages:
  * titles, homepage, APC, citation history, h-index and top topics.
  *
- * --issn-map writes ISSN -> [OpenAlex id, type] for sources that are not
+ * --issn-map writes ISSN -> [OpenAlex id, type, works_count, is_oa, is_in_doaj] for sources that are not
  * typed as journals (conference series, book series and so on), so journals
  * known only to Crossref can still be linked to their OpenAlex source.
  * --keep-raw also writes each journal's raw OpenAlex record (topics included)
@@ -87,7 +87,7 @@ for (const [i, url] of parts.entries()) {
           if (issnMapOut) {
             const id = String(s.id).replace('https://openalex.org/', '')
             for (const issn of new Set([s.issn_l, ...(s.issn ?? [])].filter(Boolean).map(x => String(x).toUpperCase()))) {
-              if (!issnMap[issn] || (s.works_count ?? 0) > issnMap[issn][2]) issnMap[issn] = [id, s.type ?? null, s.works_count ?? 0]
+              if (!issnMap[issn] || (s.works_count ?? 0) > issnMap[issn][2]) issnMap[issn] = [id, s.type ?? null, s.works_count ?? 0, !!s.is_oa, !!s.is_in_doaj]
             }
           }
           continue
