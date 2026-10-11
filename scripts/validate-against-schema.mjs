@@ -29,6 +29,7 @@ import { readFileSync, readdirSync, existsSync } from 'fs'
 import { gunzipSync } from 'zlib'
 import { join } from 'path'
 import { titleKey, alternateTitleText } from '../src/global-index.mjs'
+import { issnIntegrityFindings, findingKey, parseOpenIssues } from '../src/issn-integrity.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -244,6 +245,39 @@ try {
     console.log(`Validated ${count} screening records`)
   }
 } catch (e) { errors++; console.log('INVALID screening:', e.message) }
+
+// ISSN integrity across journals/core and journals/discovered: every check digit right, and no ISSN on two
+// live ids (registry/superseded-ids.csv lists the ids that are no longer live). A finding already in the review
+// queue, audits/data-quality/issn-integrity/open-issues.csv, is a warning; a new one is an error. Without the
+// queue every finding is only reported, as with the other checks posi-data does not have the files for yet.
+try {
+  const records = []
+  const collect = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name)
+      if (e.isDirectory()) collect(p)
+      else if (e.name.endsWith('.json')) records.push(JSON.parse(readFileSync(p, 'utf-8')))
+    }
+  }
+  collect(join(posiDataDir, 'journals/core'))
+  for (const f of readdirSync(join(posiDataDir, 'journals/discovered')).filter(f => f.endsWith('.jsonl'))) {
+    for (const line of readFileSync(join(posiDataDir, 'journals/discovered', f), 'utf-8').split('\n')) if (line.trim()) records.push(JSON.parse(line))
+  }
+  const supersededFile = join(posiDataDir, 'registry/superseded-ids.csv')
+  const superseded = new Set(existsSync(supersededFile)
+    ? readFileSync(supersededFile, 'utf-8').split('\n').slice(1).map(l => l.split(',')[0].trim()).filter(Boolean)
+    : [])
+  const queueFile = join(posiDataDir, 'audits/data-quality/issn-integrity/open-issues.csv')
+  const queue = existsSync(queueFile) ? parseOpenIssues(readFileSync(queueFile, 'utf-8')) : null
+  const findings = issnIntegrityFindings(records, superseded)
+  let open = 0
+  for (const f of findings) {
+    const text = f.kind === 'checksum' ? `${f.ids[0]} ${f.field} ${f.issn}: wrong check digit` : `${f.issn} is held by ${f.ids.join(' and ')}`
+    if (!queue || queue.has(findingKey(f))) { open++; console.log(`REVIEW ISSN ${text}`) }
+    else { errors++; console.log(`INVALID ISSN ${text} (not in the review queue)`) }
+  }
+  console.log(`Checked ISSNs of ${records.length} journal records: ${open} under review${queue ? '' : ' (no review queue in this posi-data; not enforced)'}`)
+} catch (e) { errors++; console.log('INVALID ISSN integrity:', e.message) }
 
 console.log(errors === 0 ? '\nALL VALID' : `\n${errors} INVALID RECORDS`)
 process.exit(errors === 0 ? 0 : 1)
