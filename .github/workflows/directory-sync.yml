@@ -19,13 +19,14 @@ name: Directory sync
 # contents + pull requests write) and DOAJ_API_KEY (optional, a premium DOAJ key for fresher data).
 # A failed run opens an issue here (scripts/global/alert.sh).
 #
-# Schedule: off. Run it by hand (workflow_dispatch) until a run has been checked, then uncomment the
-# schedule; the old workflows in the website repository (Daily Journal Sync, DOAJ Journal Sync) are
-# removed when this one is on.
+# Schedule: daily. A scheduled run discovers new journals (the daily mode) and opens or updates the one
+# pull request on posi-data, which a person merges. The twice-monthly full DOAJ sync (full_doaj) is still
+# run by hand. The old workflows in the website repository (Daily Journal Sync, DOAJ Journal Sync) are
+# removed once the website reads the data layer.
 
 on:
-  # schedule:
-  #   - cron: '17 2 * * *'     # daily 02:17 UTC, as the website's Daily Journal Sync ran
+  schedule:
+    - cron: '17 2 * * *'     # daily 02:17 UTC, as the website's Daily Journal Sync ran
   workflow_dispatch:
     inputs:
       full_doaj:
