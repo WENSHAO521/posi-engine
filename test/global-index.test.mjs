@@ -160,3 +160,21 @@ test('a link from an ISSN map written before the flags existed leaves open acces
   assert.equal(rec.open_access, null)
   assert.equal(rec.in_doaj, null)
 })
+
+test('a curated journal neither registry lists yet is still in the corpus', () => {
+  const curated = [
+    { posi_id: 'POSI-J-000042', issns: ['3056-6177'], title: 'New Journal', publisher: 'Panorama Scholarly Group', open_access: true },
+    { posi_id: 'POSI-J-000043', issns: ['1234-5678'], title: 'Harvested Journal' },
+    { posi_id: 'POSI-J-000044', issns: [], title: 'No ISSN' },
+    { posi_id: 'POSI-J-000045', issns: ['2222-3333'], title: 'Gone', collection_status: 'withdrawn' },
+  ]
+  const corpus = buildGlobalCorpus([fromOpenAlexSource(oaSource())], [], curated)
+  assert.deepEqual(corpus.map(r => r.posi_id), ['POSI-J-000042', 'POSI-J-000043'])
+  const rec = corpus[0]
+  assert.equal(rec.curated, true)
+  assert.deepEqual(rec.sources, [])
+  assert.deepEqual(rec.issns, ['3056-6177'])
+  assert.equal(rec.issn_online, '3056-6177')
+  assert.equal(rec.publisher, 'Panorama Scholarly Group')
+  assert.equal(rec.open_access, true)
+})
