@@ -16,7 +16,8 @@ name: Directory sync
 #      site reads it.
 #
 # Needs the secrets POSI_DATA_TOKEN (push branches and open pull requests on WENSHAO521/posi-data;
-# contents + pull requests write) and DOAJ_API_KEY (optional, a premium DOAJ key for fresher data).
+# contents + pull requests write), DOAJ_API_KEY (optional, a premium DOAJ key for fresher data) and
+# OPENALEX_API_KEY (the project's key, for the OpenAlex discovery walk).
 # A failed run opens an issue here (scripts/global/alert.sh).
 #
 # Schedule: daily. A scheduled run discovers new journals (the daily mode) and opens or updates the one
@@ -60,6 +61,7 @@ jobs:
       POSI_DISCOVERED_FILE: ${{ github.workspace }}/work/discovered-journals.json
       POSI_CORE_FILE: ${{ github.workspace }}/posi-data/corpus/core-collection.json
       DOAJ_API_KEY: ${{ secrets.DOAJ_API_KEY }}
+      OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
       LIMIT: ${{ inputs.limit }}
       PQF_MINUTES: ${{ inputs.pqf_minutes }}
     steps:
