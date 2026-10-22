@@ -1,0 +1,68 @@
+name: Daily OpenAlex journal profiles
+
+# Refreshes the figures on the journal pages (works, citations, h-index, i10-index, works and citations
+# per year, topics) every day from the OpenAlex API, with the project's OPENALEX_API_KEY. The monthly
+# journal directory (journal-directory.yml) takes them from the OpenAlex snapshot, which OpenAlex
+# publishes about once a month, so on their own the pages could show figures up to two months old.
+#
+# Output: openalex-profiles.jsonl.gz on the fixed release `openalex-profiles` (replaced each day, never
+# marked latest). The site build (sync-live-data.mjs in Panorama-Open-Scholarly-Index) prefers it to
+# the profiles of the newest journals-* / global-index-* release. Runs before the site's daily sync.
+#
+# Cost: about 1,300 list requests (200 journals each), roughly USD 0.13 of the key's daily budget.
+
+on:
+  schedule:
+    - cron: '40 0 * * *'   # daily 00:40 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: openalex-profiles
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # the openalex-profiles release
+  issues: write     # alerts
+
+env:
+  TAG: openalex-profiles
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ALERT_TITLE: 'Daily OpenAlex journal profiles: run needs attention'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Harvest the profiles
+        env:
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
+          POSI_MAILTO: posi@panorama-sg.com
+        run: |
+          set -euo pipefail
+          [ -n "$OPENALEX_API_KEY" ] || { echo "OPENALEX_API_KEY is not set" >&2; exit 1; }
+          node scripts/global/harvest-openalex-profiles.mjs --out work/openalex-profiles.jsonl --fresh
+          N=$(wc -l < work/openalex-profiles.jsonl)
+          # A partial answer must not replace a full file: OpenAlex lists well over 100,000 journals.
+          [ "$N" -ge 50000 ] || { echo "Only $N profiles; not publishing" >&2; exit 1; }
+          gzip -kf work/openalex-profiles.jsonl
+          echo "$N journal profiles, $(date -u +%F)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --latest=false \
+            --title "OpenAlex journal profiles (daily)" \
+            --notes "openalex-profiles.jsonl.gz, refreshed daily from the OpenAlex API by openalex-profiles.yml. Read by the website build for the journal pages."
+          gh release upload "$TAG" work/openalex-profiles.jsonl.gz --clobber
+
+      - name: Alert on failure
+        if: failure()
+        run: scripts/global/alert.sh "The daily OpenAlex journal profile refresh failed. The journal pages keep the previous day's figures (or the monthly snapshot's) until it runs again."
