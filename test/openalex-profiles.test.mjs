@@ -10,7 +10,8 @@ test('the API refresh selects every field the journal profile reads', () => {
     'last_publication_year', 'counts_by_year', 'topics', 'societies']
   for (const f of read) assert.ok(fields.has(f), f)
   const u = new URL(pageUrl('*'))
-  assert.equal(u.searchParams.get('filter'), 'type:journal')
+  // every source type: a POSI journal can sit on a source OpenAlex types as a conference or book series
+  assert.equal(u.searchParams.get('filter'), null)
   assert.equal(u.searchParams.get('cursor'), '*')
 })
 

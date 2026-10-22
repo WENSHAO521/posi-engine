@@ -109,10 +109,11 @@ export function linkOpenAlexSource(rec, hit) {
  * Merge harvested records into one corpus.
  * @param {ReturnType<typeof fromOpenAlexSource>[]} openalex
  * @param {ReturnType<typeof fromCrossrefJournal>[]} crossref
- * @param {{ posi_id: string, issns: string[], title?: string|null, alternate_titles?: (string|object)[]|null, collection_status?: string|null }[]} curated - existing curated records (POSI-J ids).
+ * @param {{ posi_id: string, issns: string[], title?: string|null, alternate_titles?: (string|object)[]|null, collection_status?: string|null, publisher?: string|null, country?: string|null, open_access?: boolean|null, openalex_source_id?: string|null }[]} curated - existing curated records (POSI-J ids).
  *   A record with `collection_status: 'withdrawn'` takes its journal out of the corpus altogether: the harvested
  *   records that resolve to it (by ISSN) are dropped, so it is neither crawled for PCS nor ranked, as the website
- *   drops a withdrawn journal from the editions.
+ *   drops a withdrawn journal from the editions. Every other curated journal is in the corpus even when neither
+ *   registry lists it yet (sources: []), so a journal POSI adds has a directory entry and a journal page at once.
  * @returns {object[]} corpus records shaped for run-pcs-etl.mjs (posi_id, issn_online, issn_print, title, ...).
  *   A curated record whose harvested title differs from its curated title
  *   carries the harvested one as `registry_title` (see titleMismatches).
@@ -190,6 +191,36 @@ export function buildGlobalCorpus(openalex, crossref, curated = []) {
       psc_category: r.psc_category,
       psc_confidence: r.psc_confidence,
       sources: r.sources,
+      methodology_version: GLOBAL_INDEX_METHODOLOGY_VERSION,
+    })
+  }
+  for (const c of curated) {
+    const issns = [...new Set(c.issns.map(normIssn).filter(Boolean))]
+    if (seen.has(c.posi_id) || isWithdrawn(c) || !issns.length) continue
+    seen.add(c.posi_id)
+    const title = c.title || null
+    const alternateTitles = alternates(title, c.alternate_titles ?? [])
+    out.push({
+      posi_id: c.posi_id,
+      curated: true,
+      title,
+      ...(alternateTitles.length ? { alternate_titles: alternateTitles } : {}),
+      publisher: c.publisher?.trim() || null,
+      publisher_source: c.publisher?.trim() ? 'posi' : null,
+      issn_online: issns[0],
+      issn_print: issns[1] ?? null,
+      issns,
+      issn_l: null,
+      openalex_source_id: c.openalex_source_id ?? null,
+      country: c.country ?? null,
+      open_access: c.open_access ?? null,
+      in_doaj: null,
+      apc_usd: null,
+      works_count: null,
+      crossref_total_dois: null,
+      psc_category: null,
+      psc_confidence: 'unclassified',
+      sources: [],
       methodology_version: GLOBAL_INDEX_METHODOLOGY_VERSION,
     })
   }

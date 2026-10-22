@@ -7,9 +7,12 @@
  *
  *   OPENALEX_API_KEY=... node scripts/global/harvest-openalex-profiles.mjs --out <dir>/openalex-profiles.jsonl
  *
- * Every journal source, 200 per request with a cursor: about 1,300 list requests, roughly USD 0.13 of
- * the key's daily budget. Output lines match harvest-openalex-snapshot.mjs --profiles. Resumable: the
- * cursor is saved next to the output (<out>.state.json).
+ * Every source, 200 per request with a cursor, not only those OpenAlex types as journal: a journal POSI
+ * lists can sit on a source typed conference, book series or repository (linked by ISSN in the corpus, or
+ * named by a POSI record), and its page needs the figures as much as any. About 1,300 list requests for
+ * the journals plus a few hundred for the rest, well under USD 0.20 of the key's daily budget. Output
+ * lines match harvest-openalex-snapshot.mjs --profiles. Resumable: the cursor is saved next to the output
+ * (<out>.state.json).
  */
 import { rmSync } from 'fs'
 import { arg, flag, harvestCursor, MAILTO } from './lib.mjs'
@@ -23,7 +26,7 @@ export const PROFILE_SELECT = [
 ].join(',')
 
 export function pageUrl(cursor) {
-  const sp = new URLSearchParams({ filter: 'type:journal', 'per-page': '200', cursor, select: PROFILE_SELECT, mailto: MAILTO })
+  const sp = new URLSearchParams({ 'per-page': '200', cursor, select: PROFILE_SELECT, mailto: MAILTO })
   return `https://api.openalex.org/sources?${sp}`
 }
 
@@ -33,7 +36,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (flag('fresh')) { rmSync(out, { force: true }); rmSync(`${out}.state.json`, { force: true }) }
   const limit = Number(arg('limit')) || Infinity
   const state = await harvestCursor({
-    out, limit, label: 'OpenAlex journal profiles',
+    out, limit, label: 'OpenAlex source profiles',
     firstUrl: pageUrl,
     pick: j => ({ items: j.results ?? [], next: j.meta?.next_cursor ?? null, total: j.meta?.count }),
     map: profileOf,

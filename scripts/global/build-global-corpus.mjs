@@ -32,6 +32,7 @@ const curated = all('curated').flatMap(p => JSON.parse(readFileSync(p, 'utf-8'))
   .map(j => ({
     posi_id: j.posi_id, issns: [j.issn_online, j.issn_print].map(normIssn).filter(Boolean),
     title: j.title ?? null, alternate_titles: j.alternate_titles ?? null, collection_status: j.collection_status ?? null,
+    publisher: j.publisher ?? null, country: j.country ?? null, open_access: j.open_access ?? null, openalex_source_id: j.openalex_source_id ?? null,
   }))
 
 const corpus = buildGlobalCorpus(openalex, crossref, curated)
