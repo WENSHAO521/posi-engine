@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Monthly journal directory refresh, independent of the ranking cycle.
+ * Weekly journal directory refresh, independent of the ranking cycle.
  *
  * New journals appear every month, but the GLOBAL-INDEX cycle (run-cycle.mjs)
  * only harvests when a new ranking cycle starts, and a new cycle waits for the
@@ -9,16 +9,19 @@
  * own work directory and state, so the journal directory stays current
  * whether or not a ranking edition is released that month.
  *
- *   harvest -> OpenAlex journals (public snapshot) + Crossref journal list
+ *   harvest -> OpenAlex journals (the API with OPENALEX_API_KEY, else the public
+ *              snapshot, which OpenAlex publishes about once a month) + Crossref journal list
  *   corpus  -> merged global corpus
- *   done    -> the workflow releases it as journals-<YYYY-MM>
+ *   done    -> the workflow releases it as journals-<period>
  *
- *   node scripts/global/refresh-directory.mjs --work dir-work \
+ *   node scripts/global/refresh-directory.mjs --work dir-work [--period 2026-10-19] \
  *     --curated <core.json> --curated <benchmark.json> [--budget-minutes 320] [--limit N]
  *
+ * --period names the refresh (the workflow passes the week's Monday); the default is the calendar month.
+ *
  * Resumable: one call advances as far as the time budget allows; the next
- * call in the same month continues (the Crossref harvest keeps its cursor).
- * A new month starts from an empty work directory. Writes <work>/directory.json
+ * call in the same period continues (the Crossref harvest keeps its cursor).
+ * A new period starts from an empty work directory. Writes <work>/directory.json
  * and prints month=, stage= and corpus_ready= (also to $GITHUB_OUTPUT).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, appendFileSync } from 'fs'
@@ -33,7 +36,7 @@ const curated = all('curated')
 const limit = arg('limit')
 const deadline = Date.now() + Number(arg('budget-minutes', 320)) * 60_000
 const engineDir = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
-const month = new Date().toISOString().slice(0, 7)
+const month = arg('period') || new Date().toISOString().slice(0, 7)
 
 if (!existsSync(work)) mkdirSync(work, { recursive: true })
 const statePath = join(work, 'directory.json')
@@ -69,11 +72,17 @@ const lim = limit ? ['--limit', limit] : []
 if (state.stage === 'harvest') {
   // The snapshot harvest takes minutes and is simply rerun if interrupted;
   // --limit test runs use the API harvester instead, as run-cycle.mjs does.
+  // With the project key, the journal list comes from the API, so journals OpenAlex added since its last
+  // snapshot are included; the snapshot still supplies the ISSN map of non-journal sources and the profiles.
   if (!state.openalex_done) {
-    const a = lim.length
-      ? await run('scripts/global/harvest-openalex-journals.mjs', ['--out', oaFile, ...lim])
-      : await run('scripts/global/harvest-openalex-snapshot.mjs', ['--out', oaFile, '--profiles', join(work, 'openalex-profiles.jsonl'), '--issn-map', issnMapFile])
-    if (a === 0) { state.openalex_done = true; step('harvest', 'OpenAlex complete') }
+    const api = !!(process.env.OPENALEX_API_KEY || '').trim()
+    let a
+    if (lim.length) a = await run('scripts/global/harvest-openalex-journals.mjs', ['--out', oaFile, ...lim])
+    else {
+      a = await run('scripts/global/harvest-openalex-snapshot.mjs', ['--out', api ? join(work, 'openalex-snapshot-journals.jsonl') : oaFile, '--profiles', join(work, 'openalex-profiles.jsonl'), '--issn-map', issnMapFile])
+      if (a === 0 && api) a = await run('scripts/global/harvest-openalex-journals.mjs', ['--out', oaFile])
+    }
+    if (a === 0) { state.openalex_done = true; step('harvest', `OpenAlex complete (${api && !lim.length ? 'API' : 'snapshot'})`) }
   }
   if (state.openalex_done && !state.crossref_done && remaining() > 60_000) {
     const b = await run('scripts/global/harvest-crossref-journals.mjs', ['--out', crFile, ...lim])
