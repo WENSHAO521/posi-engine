@@ -391,6 +391,10 @@ async function discoverDoajCountrySweep() {
 async function discoverOpenAlexDoaj() {
   console.error('\n🔍  Fetching DOAJ journals via OpenAlex cursor API (no page limit)\n')
 
+  // OpenAlex returns the DOAJ journals in the same order every day, so the limit counts only journals not
+  // yet recorded: journals already known are skipped, and the walk goes on until it has --limit new ones.
+  const known = knownIssnsOf(loadDiscovered())
+  let skipped = 0
   const perPage = 200
   let cursor = '*'
   const journals = []
@@ -398,7 +402,8 @@ async function discoverOpenAlexDoaj() {
   let pageNum = 0
 
   while (journals.length < LIMIT) {
-    const url = `https://api.openalex.org/sources?filter=is_in_doaj:true&per-page=${perPage}&cursor=${encodeURIComponent(cursor)}&mailto=posi@panoramagroup.org`
+    const key = (process.env.OPENALEX_API_KEY || '').trim()
+    const url = `https://api.openalex.org/sources?filter=is_in_doaj:true&per-page=${perPage}&cursor=${encodeURIComponent(cursor)}&mailto=posi@panoramagroup.org${key ? `&api_key=${encodeURIComponent(key)}` : ''}`
 
     pageNum++
     const totalPages = totalKnown ? Math.ceil(totalKnown / perPage) : '?'
@@ -434,6 +439,8 @@ async function discoverOpenAlexDoaj() {
       const issn_online = src.issn_l ?? issns[0] ?? null
       const issn_print  = issns.find(i => i !== issn_online) ?? null
       const primaryIssn = issn_online ?? issn_print
+
+      if (issns.some(i => known.has(i))) { skipped++; continue }
 
       const code = primaryIssn ? `issn-${primaryIssn}` : slugify(src.display_name ?? '').slice(0, 24)
 
@@ -474,6 +481,7 @@ async function discoverOpenAlexDoaj() {
     await sleep(120)  // OpenAlex allows ~10 req/s; 120ms is safe
   }
 
+  console.error(`    Skipped ${skipped} journals already recorded`)
   return journals
 }
 
