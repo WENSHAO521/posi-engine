@@ -9,7 +9,8 @@ name: Daily OpenAlex journal profiles
 # marked latest). The site build (sync-live-data.mjs in Panorama-Open-Scholarly-Index) prefers it to
 # the profiles of the newest journals-* / global-index-* release. Runs before the site's daily sync.
 #
-# Cost: about 1,300 list requests (200 journals each), roughly USD 0.13 of the key's daily budget.
+# Cost: about 1,300 list requests for the journals (200 each) plus a few hundred for the other source types
+# (a POSI journal can sit on a source OpenAlex types as a conference or book series), under USD 0.20 a day.
 
 on:
   schedule:
