@@ -1,24 +1,30 @@
-name: Monthly journal directory
+name: Weekly journal directory
 
-# Refreshes the journal corpus and OpenAlex profiles once a month. The
+# Refreshes the journal corpus and OpenAlex profiles once a week. The
 # ranking (global-index.yml) runs once a year, at the start of December, and
 # only its cycle harvests journals, so without this the journal directory
-# would miss eleven months of new journals a year.
+# would miss the year's new journals.
 #
-# Schedule: the 4th to 6th of each month. The 4th normally finishes the
-# refresh; the 5th and 6th resume one that did not, and otherwise exit at
-# once. A month whose corpus a global-index release already carries (the
-# December ranking) is skipped.
+# The OpenAlex journal list comes from the API with the project's
+# OPENALEX_API_KEY (about 1,300 list requests), so journals OpenAlex added
+# since its last monthly snapshot are included; without the key it falls back
+# to the snapshot. The journal pages' figures are refreshed daily on their own
+# (openalex-profiles.yml).
 #
-# Output: a release tagged journals-<YYYY-MM> with global-corpus.json.gz, its
-# summary and openalex-profiles.jsonl.gz. The site build (sync-live-data.mjs
+# Schedule: Monday to Wednesday. Monday normally finishes the refresh;
+# Tuesday and Wednesday resume one that did not, and otherwise exit at once.
+#
+# Output: a release tagged journals-<Monday's date> with global-corpus.json.gz,
+# its summary and openalex-profiles.jsonl.gz. The site build (sync-live-data.mjs
 # in Panorama-Open-Scholarly-Index) uses the newest journals-* or
 # global-index-* release, and the site rebuilds daily. posi-data imports only
-# global-index-* releases, so these do not touch the rankings.
+# global-index-* releases, so these do not touch the rankings. Only the newest
+# four journals-* releases are kept, so the other workflows' release lookups
+# (the newest 30 releases) still reach the global-index-* ones.
 
 on:
   schedule:
-    - cron: '30 2 4-6 * *'   # 4th-6th of each month, 02:30 UTC
+    - cron: '30 2 * * 1-3'   # Monday to Wednesday, 02:30 UTC
   workflow_dispatch:
     inputs:
       limit:
@@ -26,7 +32,7 @@ on:
         required: false
         default: ''
       force:
-        description: 'Run even if this month already has a corpus release'
+        description: 'Run even if this week already has a corpus release'
         type: boolean
         default: false
       continuation:
@@ -56,15 +62,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Skip if this month already has a corpus release
+      - name: Skip if this week already has a corpus release
         id: check
         run: |
           set -euo pipefail
-          MONTH=$(date -u +%Y-%m)
-          echo "month=$MONTH" >> "$GITHUB_OUTPUT"
+          # The week is named by its Monday.
+          PERIOD=$(date -u -d "-$(( $(date -u +%u) - 1 )) days" +%F)
+          echo "period=$PERIOD" >> "$GITHUB_OUTPUT"
           TAGS=$(gh release list --limit 50 --json tagName -q '.[].tagName')
-          if [ "${{ inputs.force || false }}" != "true" ] && echo "$TAGS" | grep -Eq "^(journals-$MONTH|global-index-$MONTH-[0-9]{2})$"; then
-            echo "A corpus release for $MONTH exists; nothing to do"
+          if [ "${{ inputs.force || false }}" != "true" ] && echo "$TAGS" | grep -Eq "^(journals-$PERIOD|global-index-$PERIOD)$"; then
+            echo "A corpus release for the week of $PERIOD exists; nothing to do"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -95,11 +102,14 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         env:
           POSI_MAILTO: posi@panorama-sg.com
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
           LIMIT: ${{ inputs.limit }}
+          PERIOD: ${{ steps.check.outputs.period }}
         run: |
           [[ -z "$LIMIT" || "$LIMIT" =~ ^[0-9]+$ ]] || { echo "limit must be a whole number" >&2; exit 1; }
           node scripts/global/refresh-directory.mjs \
             --work dir-work \
+            --period "$PERIOD" \
             --curated posi-data/corpus/core-collection.json \
             --curated posi-data/corpus/global-benchmark.json \
             --budget-minutes 320 \
@@ -108,10 +118,10 @@ jobs:
       - name: Release the journal corpus
         if: steps.refresh.outputs.corpus_ready == 'true' && inputs.limit == ''
         env:
-          MONTH: ${{ steps.refresh.outputs.month }}
+          PERIOD: ${{ steps.refresh.outputs.month }}
         run: |
           set -euo pipefail
-          TAG="journals-$MONTH"
+          TAG="journals-$PERIOD"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG exists"
           else
@@ -120,20 +130,24 @@ jobs:
             if [ -f dir-work/openalex-profiles.jsonl ]; then gzip -kf dir-work/openalex-profiles.jsonl; PROFILES=dir-work/openalex-profiles.jsonl.gz; fi
             COUNT=$(node -e 'console.log(require("./dir-work/global-corpus.json").length)')
             gh release create "$TAG" dir-work/global-corpus.json.gz dir-work/global-corpus.json.summary.json $PROFILES \
-              --title "Journal directory $MONTH" \
-              --notes "Monthly journal directory refresh ($COUNT journals). Journal corpus and OpenAlex profiles only; rankings are released separately as global-index-* when a ranking cycle completes."
+              --title "Journal directory, week of $PERIOD" \
+              --notes "Weekly journal directory refresh ($COUNT journals). Journal corpus and OpenAlex profiles only; rankings are released separately as global-index-* when a ranking cycle completes."
           fi
+          # Keep the newest four weekly releases (the list is newest first).
+          for t in $(gh release list --limit 100 --json tagName -q '.[].tagName' | grep '^journals-' | tail -n +5); do
+            gh release delete "$t" --yes --cleanup-tag
+          done
 
-      - name: Alert if the refresh is unfinished on the 6th
+      - name: Alert if the refresh is unfinished on Wednesday
         if: github.event_name == 'schedule' && steps.check.outputs.skip != 'true' && steps.refresh.outputs.stage != 'done'
         run: |
-          if [ "$(date -u +%d)" -ge 6 ]; then
-            scripts/global/alert.sh "The monthly journal directory refresh is not finished after its last scheduled run (stage: ${{ steps.refresh.outputs.stage }}). Run the Monthly journal directory workflow by hand within 7 days to finish it from the cached progress."
+          if [ "$(date -u +%u)" -ge 3 ]; then
+            scripts/global/alert.sh "The weekly journal directory refresh is not finished after its last scheduled run (stage: ${{ steps.refresh.outputs.stage }}). Run the Weekly journal directory workflow by hand to finish it from the cached progress."
           fi
 
       - name: Alert on failure
         if: failure()
-        run: scripts/global/alert.sh "The monthly journal directory refresh failed."
+        run: scripts/global/alert.sh "The weekly journal directory refresh failed."
 
       - name: Save work directory
         if: always() && steps.check.outputs.skip != 'true'
@@ -155,4 +169,4 @@ jobs:
           EXTRA_INPUTS: >-
             ${{ inputs.force && 'force=true' || '' }}
             ${{ inputs.limit && format('limit={0}', inputs.limit) || '' }}
-        run: scripts/global/continue-run.sh journal-directory.yml "The monthly journal directory refresh (stage ${{ steps.refresh.outputs.stage }})"
+        run: scripts/global/continue-run.sh journal-directory.yml "The weekly journal directory refresh (stage ${{ steps.refresh.outputs.stage }})"
