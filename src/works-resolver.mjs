@@ -58,7 +58,7 @@ function isoQuarter(iso) {
  * @param {object} raw - one Crossref work-list item
  * @returns {{
  *   doi: string|null, title: string, hasAbstract: boolean,
- *   referenceCount: number, hasLicense: boolean, hasArchive: boolean,
+ *   referenceCount: number, hasLicense: boolean, hasArchive: boolean|null,
  *   documentType: string|null, publishedDate: string|null,
  *   depositDate: string|null, issueOrPeriod: string|null,
  *   containerTitle: string|null,
@@ -86,7 +86,8 @@ export function normalizeCrossrefWork(raw) {
     hasAbstract: Boolean(raw.abstract && String(raw.abstract).trim().length > 0),
     referenceCount: typeof raw['references-count'] === 'number' ? raw['references-count'] : 0,
     hasLicense: Array.isArray(raw.license) && raw.license.length > 0,
-    hasArchive: Array.isArray(raw.archive) && raw.archive.length > 0,
+    // DataCite records have no archive field: unknown, not a missing archive.
+    hasArchive: raw._source === 'datacite' ? null : Array.isArray(raw.archive) && raw.archive.length > 0,
     documentType: raw.type ?? null,
     publishedDate,
     depositDate: crossrefDateToIso(raw.deposited),
@@ -255,7 +256,8 @@ export function deriveInfrastructureItemStatuses({ sample, doiChecks, oaiPmhChec
   // legitimately read `not_met` for most small/new journals that haven't
   // set up third-party archiving yet; that is an honest finding, not a
   // resolver defect.
-  const digital_preservation_archiving = n === 0 ? 'unknown' : (sample.some(a => a.hasArchive) ? 'met' : 'not_met')
+  // A sample read from DataCite (hasArchive null) cannot show either way.
+  const digital_preservation_archiving = n === 0 || sample.every(a => a.hasArchive === null) ? 'unknown' : (sample.some(a => a.hasArchive) ? 'met' : 'not_met')
 
   return {
     doi_resolution_reliability,

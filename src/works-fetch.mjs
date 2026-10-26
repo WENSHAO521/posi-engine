@@ -236,6 +236,145 @@ export async function fetchAllCrossrefWorks(issn, opts = {}) {
   }
 }
 
+// ---------------------------------------------------------------------
+// DataCite fallback
+// ---------------------------------------------------------------------
+
+const DATACITE_BASE = 'https://api.datacite.org'
+/** DataCite serves page-number results only up to this many records. */
+export const DATACITE_MAX_RECORDS = 10_000
+
+/** DataCite resourceTypeGeneral -> the Crossref `type` the resolvers read.
+ * Records filed under a journal's ISSN are its contributions: Zenodo-hosted
+ * journals commonly type their articles Dataset, Text or Other, so those
+ * count as journal articles here (the same rule the site's journal listing
+ * uses). Anything unlisted keeps a lower-case form of DataCite's own type,
+ * which the resolvers treat as a non-article. */
+const DATACITE_TYPE = {
+  JournalArticle: 'journal-article', Dataset: 'journal-article', Text: 'journal-article', Other: 'journal-article',
+  ConferencePaper: 'proceedings-article', Preprint: 'posted-content', PeerReview: 'peer-review',
+  BookChapter: 'book-chapter', Book: 'book', Report: 'report', Dissertation: 'dissertation', Standard: 'standard',
+}
+
+function isoToDateParts(iso) {
+  const m = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?/.exec(String(iso ?? ''))
+  if (!m) return undefined
+  return { 'date-parts': [[Number(m[1]), ...(m[2] ? [Number(m[2])] : []), ...(m[3] ? [Number(m[3])] : [])]] }
+}
+
+/**
+ * One DataCite record (`data[].attributes`) in the shape of a Crossref
+ * work-list item, so `normalizeCrossrefWork()` and
+ * `normalizeCrossrefWorkForPcs()` read it unchanged. Fields DataCite does
+ * not have (archive) stay absent, so they score as missing, never as met.
+ * `_source: 'datacite'` marks where the record came from.
+ * @param {object} a
+ */
+export function dataciteToCrossrefItem(a) {
+  const issued = a.dates?.find(d => d?.dateType === 'Issued')?.date ?? a.published ?? (a.publicationYear ? String(a.publicationYear) : null)
+  const general = a.types?.resourceTypeGeneral ?? null
+  const abstract = a.descriptions?.find(d => d?.descriptionType === 'Abstract')?.description ?? null
+  const container = a.container ?? {}
+  const pages = [container.firstPage, container.lastPage].filter(Boolean).join('-')
+  return {
+    _source: 'datacite',
+    DOI: a.doi ?? null,
+    title: a.titles?.[0]?.title ? [a.titles[0].title] : [],
+    author: (a.creators ?? []).filter(c => c?.nameType !== 'Organizational').map(c => {
+      const orcid = c.nameIdentifiers?.find(n => /orcid/i.test(`${n?.nameIdentifierScheme ?? ''} ${n?.nameIdentifier ?? ''}`))?.nameIdentifier
+      return {
+        given: c.givenName ?? null,
+        family: c.familyName ?? (c.givenName ? null : c.name ?? null),
+        ...(orcid ? { ORCID: orcid } : {}),
+        affiliation: (c.affiliation ?? []).map(x => (typeof x === 'string' ? { name: x } : { name: x?.name })).filter(x => x.name),
+      }
+    }),
+    ...(abstract ? { abstract } : {}),
+    'references-count': typeof a.referenceCount === 'number' ? a.referenceCount : 0,
+    'is-referenced-by-count': typeof a.citationCount === 'number' ? a.citationCount : 0,
+    license: (a.rightsList ?? []).filter(r => r?.rightsUri).map(r => ({ URL: r.rightsUri })),
+    type: general ? DATACITE_TYPE[general] ?? general.toLowerCase() : null,
+    published: isoToDateParts(issued),
+    issued: isoToDateParts(issued),
+    deposited: isoToDateParts(a.registered ?? a.created),
+    ...(container.volume ? { volume: container.volume } : {}),
+    ...(container.issue ? { issue: container.issue } : {}),
+    ...(pages ? { page: pages } : {}),
+    'container-title': container.title ? [container.title] : [],
+  }
+}
+
+/** DataCite query for the records that name `issn` as their container or as
+ * an IsPartOf related identifier (how Zenodo registers a journal's deposits).
+ * Zenodo registers every deposit twice, a concept DOI (HasVersion -> each
+ * version) and a version DOI; the concept records are left out so an
+ * article counts once. Checked live 2026-10-26: ISSN 2058-5519 has 1,956
+ * records, 985 without the concept DOIs. */
+export function dataciteIssnQuery(issn, { fromYear, untilYear } = {}) {
+  const clauses = [
+    `(relatedIdentifiers.relatedIdentifier:"${issn}" OR container.identifier:"${issn}")`,
+    'NOT relatedIdentifiers.relationType:HasVersion',
+  ]
+  if (fromYear || untilYear) clauses.push(`publicationYear:[${fromYear ?? '*'} TO ${untilYear ?? '*'}]`)
+  return clauses.join(' AND ')
+}
+
+/**
+ * Every DataCite record filed under a journal's ISSN, as Crossref-shaped
+ * items (`dataciteToCrossrefItem`). Used when Crossref has no works under
+ * the journal's ISSNs: journals that register DOIs with DataCite (Zenodo
+ * included) are otherwise read as having published nothing. Same return
+ * shape as `fetchAllCrossrefWorks()`, with 404 meaning "DataCite has
+ * nothing under this ISSN". Newest first by registration, paged by page
+ * number (DataCite's cursor paging ignores the sort), which DataCite stops
+ * at DATACITE_MAX_RECORDS; `totalResults` still reports the full count, so a
+ * capped fetch shows as partial coverage, never as a smaller journal.
+ * @param {string} issn
+ * @param {{ fromYear?: number, untilYear?: number, maxItems?: number, rows?: number,
+ *   fetchImpl?: Function, timeoutMs?: number, maxAttempts?: number }} [opts]
+ * @returns {Promise<{ status: number|null, totalResults: number|null, items: object[], error: string|null, pagesFetched: number }>}
+ */
+export async function fetchAllDataciteWorks(issn, opts = {}) {
+  const { fromYear, untilYear, rows = 500, fetchImpl = fetch, timeoutMs = 30000, maxAttempts = 4 } = opts
+  const maxItems = Math.min(opts.maxItems ?? MAX_WORKS_FETCHED_PER_JOURNAL, DATACITE_MAX_RECORDS)
+  const size = Math.min(rows, 1000, maxItems)
+  let items = []
+  let totalResults = null
+  let pagesFetched = 0
+  for (;;) {
+    const params = new URLSearchParams({
+      query: dataciteIssnQuery(issn, { fromYear, untilYear }),
+      'page[size]': String(size), 'page[number]': String(pagesFetched + 1), sort: '-created',
+    })
+    const url = `${DATACITE_BASE}/dois?${params.toString()}`
+    let res = null
+    let error = null
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) })
+        error = null
+        if (!isRetryableOutcome(res.status) || attempt === maxAttempts) break
+      } catch (err) {
+        res = null
+        error = err?.message ?? String(err)
+        if (attempt === maxAttempts) break
+      }
+      await sleep(2 ** attempt * 500)
+    }
+    if (!res || !res.ok) {
+      return { status: res?.status ?? null, totalResults, items, error: error ?? `HTTP ${res?.status}`, pagesFetched }
+    }
+    const data = await res.json()
+    pagesFetched++
+    totalResults = data?.meta?.total ?? totalResults
+    const page = (data?.data ?? []).map(d => d?.attributes).filter(Boolean)
+    items = items.concat(page.map(dataciteToCrossrefItem))
+    if (page.length < size || items.length >= maxItems || (totalResults != null && items.length >= totalResults)) break
+  }
+  if (!items.length) return { status: 404, totalResults: 0, items: [], error: null, pagesFetched }
+  return { status: 200, totalResults, items: items.slice(0, maxItems), error: null, pagesFetched }
+}
+
 /**
  * DOI resolution check — HEAD-equivalent (follows manually, only reading
  * the redirect target, never the destination page's own body, so this

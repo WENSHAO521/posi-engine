@@ -45,7 +45,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
-import { fetchAllCrossrefWorks, checkDoiResolution, checkOaiPmhEndpoint } from '../src/works-fetch.mjs'
+import { fetchAllCrossrefWorks, fetchAllDataciteWorks, checkDoiResolution, checkOaiPmhEndpoint } from '../src/works-fetch.mjs'
 import {
   normalizeCrossrefWork, selectArticleSample, deriveInfrastructureItemStatuses,
   computePublicationWindowStats, deriveDepositTimeliness, WORKS_RESOLVER_METHODOLOGY_VERSION, excludeFutureWorks,
@@ -99,11 +99,26 @@ async function processJournal(journal, { concurrency, delayMs, doiCheckCount, ra
 
   // Bounded at Crossref by the rating date, so neither the capped sample
   // nor total-results ever counts a work published after it.
-  const fetchResult = await fetchAllCrossrefWorks(issn, { concurrency, delayMs, filter: `type:journal-article,until-pub-date:${ratingDate}` })
+  let fetchResult = await fetchAllCrossrefWorks(issn, { concurrency, delayMs, filter: `type:journal-article,until-pub-date:${ratingDate}` })
+  // Journals whose DOIs are registered with DataCite (Zenodo included) have
+  // nothing in Crossref; their DataCite records stand in, marked by
+  // works_source. A failed Crossref request is not a reason to switch.
+  let worksSource = 'crossref'
+  if (fetchResult.status === 404 || (fetchResult.status === 200 && fetchResult.items.length === 0)) {
+    const datacite = await fetchAllDataciteWorks(issn, { untilYear: Number(ratingDate.slice(0, 4)) })
+    if (datacite.status === 200) {
+      // DataCite cannot filter to articles here, so its total also counts the
+      // other records; the fetched non-articles come off it.
+      const articles = datacite.items.filter(i => i.type === 'journal-article')
+      const dropped = datacite.items.length - articles.length
+      fetchResult = { ...datacite, items: articles, totalResults: datacite.totalResults == null ? null : Math.max(articles.length, datacite.totalResults - dropped) }
+      worksSource = 'datacite'
+    }
+  }
   if (fetchResult.status !== 200) {
     return {
       ...emptyResult(journal, fetchResult.status === 404
-        ? 'Crossref has no works registered under this ISSN'
+        ? 'Neither Crossref nor DataCite has works registered under this ISSN'
         : `Crossref fetch did not succeed: status=${fetchResult.status} error=${fetchResult.error}`),
       issn_queried: issn, crossref_status: fetchResult.status,
     }
@@ -140,7 +155,8 @@ async function processJournal(journal, { concurrency, delayMs, doiCheckCount, ra
 
   return {
     posi_id: journal.posi_id, journal_code: journal.journal_code, title: journal.title,
-    issn_queried: issn, crossref_status: 200, total_results: totalResults, works_fetched: allArticles.length,
+    issn_queried: issn, crossref_status: worksSource === 'crossref' ? 200 : 404, works_source: worksSource,
+    total_results: totalResults, works_fetched: allArticles.length,
     article_sample: sample, sample_adequacy: sampleAdequacy,
     infrastructure_item_statuses: infrastructureItemStatuses,
     doi_resolution_checks: doiChecks, oai_pmh_check: oaiPmhCheck,
