@@ -77,7 +77,7 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, unlinkSync, rmSync } from 'fs'
 import { resolve, join } from 'path'
 import { createHash } from 'crypto'
-import { fetchCrossrefWorksPage, crossrefRequestStats, PCS_SELECT_FIELDS, PCS_MAX_WORKS_PER_JOURNAL } from '../src/works-fetch.mjs'
+import { fetchCrossrefWorksPage, fetchAllDataciteWorks, crossrefRequestStats, PCS_SELECT_FIELDS, PCS_MAX_WORKS_PER_JOURNAL } from '../src/works-fetch.mjs'
 import { normalizeCrossrefWorkForPcs, isInPcsWindow, pcsWindowForMetricYear } from '../src/pcs-resolver.mjs'
 import { calculatePcs, calculatePcsCoverage, PCS_METHODOLOGY_VERSION } from '../src/pcs.mjs'
 import { isCitable } from '../src/pci.mjs'
@@ -272,12 +272,29 @@ async function processJournal(journal, { metricYear, window, rows, progressDir, 
     tried.push(issn)
     clearProgress(progressDir, journal.posi_id)
   }
-  const issnsTried = tried.filter(i => i !== issn)
+  let issnsTried = tried.filter(i => i !== issn)
+
+  // No ISSN had works in Crossref: journals whose DOIs are registered with
+  // DataCite (Zenodo included) are read from DataCite instead, marked by
+  // pcs_source. A failed Crossref request is not a reason to switch.
+  let pcsSource = 'crossref'
+  const crossrefEmpty = fetchResult.status === 404 || (fetchResult.status === 200 && fetchResult.rawItems.length === 0 && !fetchResult.totalResults)
+  if (crossrefEmpty) {
+    for (const candidate of candidates) {
+      const datacite = await fetchAllDataciteWorks(candidate, { fromYear: window.startYear, untilYear: window.endYear, maxItems: PCS_MAX_WORKS_PER_JOURNAL, rows: 1000 })
+      if (datacite.status !== 200) continue
+      issn = candidate
+      issnsTried = tried.filter(i => i !== issn)
+      fetchResult = { status: 200, error: null, totalResults: datacite.totalResults, rawItems: datacite.items, pagesFetched: datacite.pagesFetched }
+      pcsSource = 'datacite'
+      break
+    }
+  }
 
   if (fetchResult.status !== 200 && fetchResult.rawItems.length === 0) {
     return {
       ...emptyResult(journal, metricYear, window, fetchResult.status === 404
-        ? 'Crossref has no works registered under this ISSN'
+        ? 'Neither Crossref nor DataCite has works registered under this ISSN'
         : `Crossref fetch did not succeed: status=${fetchResult.status} error=${fetchResult.error}`),
       issn_queried: issn, issns_without_works: issnsTried, fetch_status: fetchResult.status, fetch_error: fetchResult.error,
       enumerated_count: fetchResult.totalResults, pages_fetched: fetchResult.pagesFetched,
@@ -304,7 +321,7 @@ async function processJournal(journal, { metricYear, window, rows, progressDir, 
     pcs: pcsResult.pcs, pcs_eligible_items: pcsResult.eligible_items, pcs_citation_count: pcsResult.citation_count,
     pcs_items_with_citation_data: pcsResult.items_with_citation_data,
     pcs_coverage: coverage, excluded_outside_window: excludedOutsideWindow,
-    pcs_source: 'crossref', pcs_source_retrieved_at: new Date().toISOString().slice(0, 10),
+    pcs_source: pcsSource, pcs_source_retrieved_at: new Date().toISOString().slice(0, 10),
     pcs_methodology_version: PCS_METHODOLOGY_VERSION,
     cells,
     note: fetchResult.status !== 200
