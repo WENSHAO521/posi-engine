@@ -60,7 +60,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Skip if this week already has a corpus release
         id: check
@@ -77,21 +77,21 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: steps.check.outputs.skip != 'true'
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Check out posi-data (read only, for curated records)
         if: steps.check.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: WENSHAO521/posi-data
           path: posi-data
 
       - name: Restore work directory
         if: steps.check.outputs.skip != 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: dir-work
           key: journal-directory-${{ github.run_id }}
@@ -151,7 +151,7 @@ jobs:
 
       - name: Save work directory
         if: always() && steps.check.outputs.skip != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: dir-work
           key: journal-directory-${{ github.run_id }}

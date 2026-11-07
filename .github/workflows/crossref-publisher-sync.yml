@@ -71,11 +71,11 @@ jobs:
       SINCE: ${{ inputs.since }}
       MIN_ISSNS: ${{ inputs.min_issns || '500' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Check the inputs and the posi-data token
         env:
@@ -92,7 +92,7 @@ jobs:
           fi
 
       - name: Check out posi-data
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: WENSHAO521/posi-data
           path: posi-data
