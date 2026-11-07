@@ -16,11 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - run: npm ci
@@ -28,7 +28,7 @@ jobs:
       - run: npm test
 
       - name: Check out posi-data
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: WENSHAO521/posi-data
           path: posi-data

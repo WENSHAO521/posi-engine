@@ -91,7 +91,7 @@ jobs:
       stage: ${{ steps.cycle.outputs.stage }}
       cycle: ${{ steps.cycle.outputs.cycle }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # One ranking a year: a scheduled December run does nothing when this
       # year's Citation Ranking edition is already released (2026's came out
@@ -112,21 +112,21 @@ jobs:
           fi
           echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: steps.year.outputs.skip != 'true'
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Check out posi-data (read only, for curated records)
         if: steps.year.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: WENSHAO521/posi-data
           path: posi-data
 
       - name: Restore work directory
         if: steps.year.outputs.skip != 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: work
           key: global-index-${{ github.run_id }}
@@ -202,7 +202,7 @@ jobs:
 
       - name: Save work directory
         if: always() && steps.year.outputs.skip != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: work
           key: global-index-${{ github.run_id }}-prepare
@@ -230,14 +230,14 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Restore work directory
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: work
           key: global-index-${{ github.run_id }}-prepare
@@ -271,7 +271,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pcs-shard-${{ matrix.shard }}
           path: pcs-shard.tar.gz
@@ -285,27 +285,27 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Check out posi-data (read only, for curated records and the PSC taxonomy)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: WENSHAO521/posi-data
           path: posi-data
 
       - name: Restore work directory
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: work
           key: global-index-${{ github.run_id }}-prepare
           fail-on-cache-miss: true
 
       - name: Download shard results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: pcs-shard-*
           path: shards
@@ -355,7 +355,7 @@ jobs:
 
       - name: Save work directory
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: work
           key: global-index-${{ github.run_id }}

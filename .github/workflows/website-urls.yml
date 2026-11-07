@@ -31,14 +31,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Check out posi-data
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: WENSHAO521/posi-data
           path: posi-data
@@ -60,7 +60,7 @@ jobs:
             --curated config/website-url-curated.json --report work/website-urls $FLAG
           cat work/website-urls/website-urls.md >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: website-urls

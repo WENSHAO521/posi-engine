@@ -25,9 +25,10 @@
  * monthly run and `pub` when --since is given (a historical pass over articles
  * published since then). A scan that reads fewer than --min-issns ISSNs fails
  * without writing, so a Crossref outage is not mistaken for a month with no new
- * journals; so does a day that reaches the facet cap even when read per DOI
- * prefix, and a DOAJ lookup that keeps failing (a journal is never recorded as
- * subscription because DOAJ could not be reached).
+ * journals. A day that reaches the facet cap even per DOI prefix is paged work
+ * by work (cursor, ISSN field only). A DOAJ lookup that keeps failing also
+ * fails the scan (a journal is never recorded as subscription because DOAJ
+ * could not be reached).
  */
 import { readFileSync, writeFileSync } from 'fs'
 
@@ -100,12 +101,32 @@ async function scan(dateField, from, until, found) {
     return
   }
   // One day still reaches the facet cap: read it again per DOI prefix of the member. If a prefix alone
-  // still reaches the cap, stop rather than carry on with a list that is cut off without any sign of it.
+  // still reaches the cap (Wiley's 10.1002 on a day of bulk re-deposits), page through that day's works of
+  // the prefix and read their ISSNs, rather than carry on with a list that is cut off.
   for (const prefix of await memberPrefixes()) {
     const part = await facetIssns(dateField, from, until, `,prefix:${prefix}`)
-    if (part.length >= FACET_CAP) throw new Error(`${from}, prefix ${prefix}: ${part.length} ISSNs reach the facet cap; the list would be incomplete`)
-    addKeys(found, part)
+    if (part.length < FACET_CAP) { addKeys(found, part); continue }
+    const before = found.size
+    const works = await pageIssns(dateField, from, until, `,prefix:${prefix}`, found)
+    console.error(`  ${from}, prefix ${prefix}: facet cap reached; paged ${works} works, ${found.size - before} new ISSNs`)
   }
+}
+
+// Every work of the window, 1,000 a page with a cursor, keeping only the ISSN field. Used only for a single
+// day and prefix that reaches the facet cap. Fails rather than return part of the list.
+const MAX_PAGES = 3000
+async function pageIssns(dateField, from, until, extra, found) {
+  const filter = `type:journal-article,from-${dateField}-date:${from},until-${dateField}-date:${until}${extra}`
+  let cursor = '*', works = 0
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const msg = await getJson(`https://api.crossref.org/members/${member}/works?rows=1000&select=ISSN&cursor=${encodeURIComponent(cursor)}&filter=${filter}&mailto=${MAILTO}`)
+    const items = msg?.items ?? []
+    for (const it of items) for (const i of it.ISSN ?? []) found.add(i)
+    works += items.length
+    if (items.length < 1000 || !msg['next-cursor']) return works
+    cursor = msg['next-cursor']
+  }
+  throw new Error(`${from}${extra}: more than ${MAX_PAGES * 1000} works in one day; the list would be incomplete`)
 }
 
 // ISSNs the registry already knows, as an ISSN-L or as one half of a pair.
