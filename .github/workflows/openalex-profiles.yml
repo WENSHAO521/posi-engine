@@ -62,7 +62,12 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --latest=false \
             --title "OpenAlex journal profiles (daily)" \
             --notes "openalex-profiles.jsonl.gz, refreshed daily from the OpenAlex API by openalex-profiles.yml. Read by the website build for the journal pages."
-          gh release upload "$TAG" work/openalex-profiles.jsonl.gz --clobber
+          # A GitHub 502/503/504 must not throw away the day's harvest: tried four times, 20, 40 and 60 s apart.
+          for i in 1 2 3 4; do
+            gh release upload "$TAG" work/openalex-profiles.jsonl.gz --clobber && exit 0
+            [ "$i" = 4 ] || sleep $((20 * i))
+          done
+          exit 1
 
       - name: Alert on failure
         if: failure()
