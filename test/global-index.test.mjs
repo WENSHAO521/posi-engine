@@ -43,6 +43,32 @@ test('Crossref-only journals are kept, unclassified, keyed by first ISSN', () =>
   assert.equal(out[0].psc_confidence, 'unclassified')
 })
 
+test('conflicting OpenAlex and Crossref records cannot assign 3033-5981 to the old journal', () => {
+  const oldTitle = 'Sovremennye issledovaniya sotsialnykh problem'
+  const currentTitle = 'Russian Social and Humanitarian Studies'
+  const oldIssns = ['2077-1770', '2218-7405']
+  const openalex = [fromOpenAlexSource(oaSource({
+    id: 'https://openalex.org/S2738561021', display_name: oldTitle,
+    issn_l: oldIssns[0], issn: [...oldIssns, '3033-5981'],
+  }))]
+  const crossref = [
+    fromCrossrefJournal({ title: oldTitle, ISSN: oldIssns, counts: { 'total-dois': 2692 } }),
+    fromCrossrefJournal({ title: oldTitle, ISSN: ['3033-5981'], counts: { 'total-dois': 51 } }),
+  ]
+
+  const [old] = buildGlobalCorpus(openalex, crossref)
+  assert.deepEqual(old.issns, oldIssns)
+  assert.equal(old.crossref_total_dois, 2692)
+  assert.equal(old.openalex_source_id, 'S2738561021')
+
+  const corrected = fromCrossrefJournal({ title: currentTitle, ISSN: ['3033-5981'], counts: { 'total-dois': 8 } })
+  const [, current] = buildGlobalCorpus(openalex, [...crossref, corrected])
+  assert.deepEqual(current.issns, ['3033-5981'])
+  assert.equal(current.title, currentTitle)
+  assert.equal(current.crossref_total_dois, 8)
+  assert.equal(current.openalex_source_id, null)
+})
+
 test('titles never merge records; ISSNs do', () => {
   const oa = [fromOpenAlexSource(oaSource()), fromOpenAlexSource(oaSource({ id: 'S2', issn_l: '9999-0000', issn: ['9999-0000'] }))]
   assert.equal(buildGlobalCorpus(oa, []).length, 2)

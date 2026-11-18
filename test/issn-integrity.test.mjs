@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { issnIntegrityFindings, findingKey, parseOpenIssues } from '../src/issn-integrity.mjs'
+import { issnIntegrityFindings, findingKey, journalCodeAliasConflicts, parseOpenIssues } from '../src/issn-integrity.mjs'
 
 const rec = (id, identifiers) => ({ id, identifiers })
 
@@ -24,6 +24,20 @@ test('an ISSN on two live ids is reported (regression: Frontiers in Environmenta
 test('a superseded id may share ISSNs with the id that replaced it', () => {
   const records = [rec('POSI-J-000091', { issn_l: '2192-8584' }), rec('POSI-J-026386', { issn_l: '2192-8584' })]
   assert.deepEqual(issnIntegrityFindings(records, new Set(['POSI-J-026386'])), [])
+})
+
+test('legacy aliases cannot shadow a current journal code or redirect to two journals', () => {
+  const old = { posi_id: 'POSI-J-001546', journal_code: 'issn-2077-1770', journal_code_aliases: ['issn-3033-5981', 'old-code'] }
+  const current = { posi_id: 'POSI-J-028800', journal_code: 'issn-3033-5981', journal_code_aliases: ['old-code'] }
+
+  assert.deepEqual(journalCodeAliasConflicts([old, current]), [
+    'alias issn-3033-5981 on POSI-J-001546 is a current journal_code on POSI-J-028800',
+    'alias old-code on POSI-J-028800 is already listed on POSI-J-001546',
+  ])
+  assert.deepEqual(journalCodeAliasConflicts([
+    { ...old, journal_code_aliases: ['old-code'] },
+    { ...current, journal_code_aliases: [] },
+  ]), [])
 })
 
 test('the review queue matches findings regardless of id order', () => {

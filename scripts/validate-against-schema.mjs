@@ -29,7 +29,7 @@ import { readFileSync, readdirSync, existsSync } from 'fs'
 import { gunzipSync } from 'zlib'
 import { join } from 'path'
 import { titleKey, alternateTitleText } from '../src/global-index.mjs'
-import { issnIntegrityFindings, findingKey, parseOpenIssues } from '../src/issn-integrity.mjs'
+import { issnIntegrityFindings, findingKey, journalCodeAliasConflicts, parseOpenIssues } from '../src/issn-integrity.mjs'
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
@@ -211,7 +211,7 @@ try {
 } catch (e) { errors++; console.log('INVALID PCS edition:', e.message) }
 
 // screening/discovered-screening.jsonl: the screening data of discovered journals, against
-// schema/screening.schema.json, with every posi_id a journal record and every journal_code unique.
+// schema/screening.schema.json, with valid journal ids and an unambiguous code or alias for every URL.
 // Skipped while posi-data has no such schema.
 try {
   const schemaFile = join(posiDataDir, 'schema/screening.schema.json')
@@ -231,6 +231,7 @@ try {
       for (const line of readFileSync(join(posiDataDir, 'journals/discovered', f), 'utf-8').split('\n')) if (line.trim()) knownIds.add(JSON.parse(line).id)
     }
     const ids = new Set(), codes = new Set()
+    const screening = []
     let count = 0
     for (const line of readFileSync(dataFile, 'utf-8').split('\n')) {
       if (!line.trim()) continue
@@ -241,6 +242,11 @@ try {
       if (ids.has(obj.posi_id)) { errors++; console.log(`INVALID screening ${obj.posi_id}: listed twice`) }
       if (codes.has(obj.journal_code)) { errors++; console.log(`INVALID screening ${obj.posi_id}: journal_code ${obj.journal_code} is already used`) }
       ids.add(obj.posi_id); codes.add(obj.journal_code)
+      screening.push(obj)
+    }
+    for (const conflict of journalCodeAliasConflicts(screening)) {
+      errors++
+      console.log(`INVALID screening: ${conflict}`)
     }
     console.log(`Validated ${count} screening records`)
   }

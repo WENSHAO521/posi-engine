@@ -73,6 +73,16 @@ export function titleKey(t) {
   return String(t ?? '').toLowerCase().replace(/&/g, ' and ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/^the /, '')
 }
 
+// ISSN Portal assigns 3033-5981 to Russian Social and Humanitarian Studies.
+// OpenAlex S2738561021 and the old-title Crossref row claim it for another journal.
+// https://portal.issn.org/resource/ISSN/3033-5981
+const RUSSIAN_SOCIAL_AND_HUMANITARIAN_STUDIES_ISSN = '3033-5981'
+const SOVREMENNYE_ISSLEDOVANIYA_TITLE_KEY = 'sovremennye issledovaniya sotsialnykh problem'
+
+export function isConflictingOpenAlexIssn(issn, sourceId) {
+  return issn === RUSSIAN_SOCIAL_AND_HUMANITARIAN_STUDIES_ISSN && sourceId === 'S2738561021'
+}
+
 /**
  * An alternate title is a string or `{ title, type, lang?, until? }`
  * (posi-data schema/journal.schema.json). Returns its title text.
@@ -127,13 +137,18 @@ export function buildGlobalCorpus(openalex, crossref, curated = []) {
   const attach = (rec) => { for (const i of rec.issns) if (!byIssn.has(i)) byIssn.set(i, rec) }
 
   for (const oa of openalex) {
-    if (!oa.issns.length) continue
-    const rec = { ...oa, sources: ['openalex'], crossref_total_dois: null }
+    const issns = oa.issns.filter(issn => !isConflictingOpenAlexIssn(issn, oa.openalex_source_id))
+    if (!issns.length) continue
+    const issn_l = isConflictingOpenAlexIssn(oa.issn_l, oa.openalex_source_id) ? null : oa.issn_l
+    const rec = { ...oa, issns, issn_l, sources: ['openalex'], crossref_total_dois: null }
     records.push(rec)
     attach(rec)
   }
   for (const cr of crossref) {
     if (!cr.issns.length) continue
+    // Keep the conflicting deposit count unassigned. Crossref also has a separate row for the old journal's own ISSNs.
+    if (cr.issns.includes(RUSSIAN_SOCIAL_AND_HUMANITARIAN_STUDIES_ISSN) &&
+        titleKey(cr.title) === SOVREMENNYE_ISSLEDOVANIYA_TITLE_KEY) continue
     const hit = cr.issns.map(i => byIssn.get(i)).find(Boolean)
     if (hit) {
       hit.sources = [...new Set([...hit.sources, 'crossref'])]

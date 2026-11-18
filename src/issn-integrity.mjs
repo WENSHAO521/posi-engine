@@ -37,6 +37,24 @@ export function issnIntegrityFindings(records, superseded = new Set()) {
   return out
 }
 
+/** A journal URL code can be current or an alias, and an alias can have only one target. */
+export function journalCodeAliasConflicts(records) {
+  const current = new Map(records.map(r => [r.journal_code, r.posi_id]))
+  const aliases = new Map()
+  const conflicts = []
+  for (const r of records) for (const alias of r.journal_code_aliases ?? []) {
+    if (current.has(alias)) {
+      conflicts.push(`alias ${alias} on ${r.posi_id} is a current journal_code on ${current.get(alias)}`)
+    }
+    if (aliases.has(alias)) {
+      conflicts.push(`alias ${alias} on ${r.posi_id} is already listed on ${aliases.get(alias)}`)
+    } else {
+      aliases.set(alias, r.posi_id)
+    }
+  }
+  return conflicts
+}
+
 /** Stable key used to match a finding against the review queue. */
 export function findingKey(f) {
   return `${f.kind}:${f.issn}:${f.ids.join('+')}`
